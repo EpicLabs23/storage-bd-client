@@ -136,6 +136,20 @@ var migrations = []string{
 	);
 	CREATE UNIQUE INDEX jobs_one_running ON jobs(credential_id) WHERE status = 'running';
 	CREATE INDEX jobs_by_credential ON jobs(credential_id, id DESC);`,
+
+	// 5: automatic backup schedule, one per credential. next_run_at is
+	// stored (not derived on the fly) so a run missed while the machine
+	// was off is caught up once at the next `serve` start.
+	`CREATE TABLE schedules (
+		credential_id  INTEGER PRIMARY KEY REFERENCES credentials(id) ON DELETE CASCADE,
+		enabled        INTEGER NOT NULL DEFAULT 1,
+		mode           TEXT NOT NULL CHECK (mode IN ('daily', 'interval')),
+		daily_minute   INTEGER NOT NULL DEFAULT 120,
+		interval_hours INTEGER NOT NULL DEFAULT 24,
+		next_run_at    TEXT,
+		last_run_at    TEXT,
+		updated_at     TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

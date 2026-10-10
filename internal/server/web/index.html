@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>storage.bd Backup</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="storage.bd backup home">
+      <img class="logo-light" src="/logo.svg" alt="storage.bd">
+      <img class="logo-dark" src="/logo-reverse.svg" alt="storage.bd">
+      <span class="brand-tag">Backup</span>
+    </a>
+    <div class="spacer"></div>
+    <span class="chip host-chip" id="host-chip" hidden></span>
+    <span class="chip" id="account-chip" hidden></span>
+  </header>
+  <div id="app"><div class="loading center"><span class="spinner"></span>Loading…</div></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

@@ -40,10 +40,22 @@ type FakeStorage struct {
 	Redirects   int
 	S3SawAuth   bool
 	API, S3     *httptest.Server
+
+	// account side (fakeaccount.go)
+	Balance float64
+	tenants map[string]map[string]any
+	refresh map[string]bool
 }
 
 func NewFakeStorage(t testing.TB) *FakeStorage {
-	f := &FakeStorage{Files: map[string][]byte{}, Tokens: map[string]bool{}}
+	f := StartFakeStorage()
+	t.Cleanup(f.Close)
+	return f
+}
+
+// StartFakeStorage starts the fake without a test (dev runner).
+func StartFakeStorage() *FakeStorage {
+	f := &FakeStorage{Files: map[string][]byte{}, Tokens: map[string]bool{}, tenants: map[string]map[string]any{}, refresh: map[string]bool{}, Balance: 500}
 	f.S3 = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.Mu.Lock()
 		if r.Header.Get("Authorization") != "" {
@@ -58,9 +70,10 @@ func NewFakeStorage(t testing.TB) *FakeStorage {
 		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
 	}))
 	f.API = httptest.NewServer(http.HandlerFunc(f.serveAPI))
-	t.Cleanup(func() { f.API.Close(); f.S3.Close() })
 	return f
 }
+
+func (f *FakeStorage) Close() { f.API.Close(); f.S3.Close() }
 
 func (f *FakeStorage) validToken(r *http.Request) bool {
 	_, pass, ok := r.BasicAuth()
@@ -74,7 +87,10 @@ func (f *FakeStorage) serveAPI(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/auth/data-token" && r.Method == http.MethodPost:
 		var b map[string]string
 		json.NewDecoder(r.Body).Decode(&b)
-		if b["install_secret"] != InstallSecret || b["tenant_id"] != TenantID {
+		f.Mu.Lock()
+		_, created := f.tenants[b["tenant_id"]]
+		f.Mu.Unlock()
+		if b["install_secret"] != InstallSecret || (b["tenant_id"] != TenantID && !created) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -106,7 +122,7 @@ func (f *FakeStorage) serveAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		f.serveRepo(w, r, strings.TrimPrefix(r.URL.Path, "/repo/"))
 	default:
-		w.WriteHeader(http.StatusNotFound)
+		f.serveAccount(w, r)
 	}
 }
 

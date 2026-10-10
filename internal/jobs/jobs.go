@@ -36,7 +36,8 @@ func SourceTag(name string) string { return "source:" + name }
 // Event is a progress notification. Exactly one of the pointer fields is
 // set, according to Type.
 type Event struct {
-	Type     string // "warning", "source-start", "progress", "source-done"
+	Type     string // "job-start", "warning", "source-start", "progress", "source-done"
+	JobID    int64
 	Source   string
 	Message  string
 	Progress *restic.Progress
@@ -111,6 +112,7 @@ func (r *Runner) Backup(ctx context.Context, cred *store.Credential, o BackupOpt
 	if err != nil {
 		return nil, nil, err
 	}
+	o.emit(Event{Type: "job-start", JobID: job.ID})
 
 	detail := &BackupDetail{Sources: []*SourceResult{}}
 	status, errMsg := store.StatusFailed, ""

@@ -30,7 +30,7 @@ Each module is built and then paused for review.
 2. **storage.bd API client + `login`/`connect`** — done. `storagebd login|logout|account|connect|activate`, `storagebd credential test`. Details below.
 3. **restic wrapper** — done. `storagebd repo init|status`, `storagebd snapshots`, `storagebd settings list|set|unset`. Details below.
 4. **Sources + jobs** — done. `storagebd source list|add-dir|add-db|update|remove`, `backup`, `restore`, `restore-db`, `jobs`. Details below.
-5. **`storagebd serve`**: scheduler + embedded web UI: connect account, manage sources, run/watch backups, browse snapshots, restore files/DBs. Optional systemd unit.
+5. **`storagebd serve`** — done. Local web UI + scheduler, `storagebd ui-url`. Details below.
 6. **Packaging**: bundled restic per arch, install script, systemd unit, release build.
 
 ## Account session (module 2)
@@ -62,6 +62,22 @@ Each module is built and then paused for review.
 - **Exit codes:** `backup` returns 0 (ok), 3 (partial, same as restic) or 1 (failed), so it fits cron.
 - **Real engines:** `scripts/it-dbs.sh` starts throwaway MariaDB 11.4 / MySQL 8.0 / Postgres 18 containers on random loopback ports and runs the `integration`-tagged round-trip tests (seed → backup → drop → restore in place → restore `--into` a copy → bad password fails with no snapshot). MariaDB and Postgres pass. MySQL 8 can't be dumped by MariaDB's dump tool (it emits `/*!100100 ...*/` comments MySQL rejects). On this dev machine the test confirms the failure is clean, with a hint to set `mysqldump-path` to Oracle's mysqldump.
 
+## Web UI and scheduler (module 5)
+
+- `storagebd serve [--listen 127.0.0.1:7878]`: an HTTP server in `internal/server` with the UI embedded (`web/`, vanilla JS + CSS, no build step, storage.bd brand tokens and logos copied from storage-bd-ui) and a JSON API that reuses the same `account`/`repo`/`jobs` code as the CLI.
+- **Access control** (the UI can restore to any path, often as root):
+  - Loopback addresses only; `--listen` refuses anything else. Remote access is through an SSH tunnel.
+  - A random 256-bit token is generated on each start. It's printed as `/auth?t=…` and written to `<data>/serve.json` (0600) for `storagebd ui-url`. Visiting that link exchanges it for an HttpOnly, SameSite=Strict cookie and redirects, so the token leaves the address bar.
+  - `Host` must be a loopback name (blocks DNS rebinding), with any port so SSH tunnels work.
+  - Non-GET API calls need an `X-Storagebd: 1` header and a same-origin `Origin` (blocks CSRF). JSON bodies are capped at 1 MB and unknown fields are rejected.
+  - Strict CSP (`script-src 'self'`, no inline styles or scripts, `frame-ancestors 'none'`) plus nosniff, no-referrer and COOP/CORP headers.
+  - All dynamic text (file names from snapshots, errors) goes through `textContent`, never `innerHTML`.
+- **Pages:** onboarding (sign in → create this machine's backup space with a live price quote) · Overview (status, live progress, account balance/plan, activate) · What to back up (folder/DB add/edit/enable/remove, back up one or all) · Snapshots & restore (snapshot list, `restic ls` folder browser with multi-select, restore to a folder or in place; DB restore in place or `--into`, with engine-specific warnings) · Schedule · Activity (per-source details, skipped files) · Settings (account, repos on this machine with test/default/remove-with-typed-confirm, tool paths).
+- **Jobs from the UI** run in the background, one per repo. Progress goes out over SSE (`/api/events`); Cancel sends restic SIGINT. A job started elsewhere (CLI, cron) still holds the store's job lock, so the UI's start fails cleanly with a 409.
+- **Scheduler** (migration 5 `schedules`): daily at HH:MM (local time) or every N hours. It checks every 30s, advances `next_run_at` *before* starting the run (so a failing or busy repo doesn't retry every tick), and runs a missed slot once at the next start. A busy repo skips the slot, with a warning.
+- **Data-token reuse:** `repo.Manager` now caches token sources per credential. storage-bd-api rate-limits `/auth/data-token` to 20/min, and browsing snapshot folders opens the repo once per click.
+- **Tests:** `internal/server/server_test.go` covers the auth/hardening rules (bad token, rebinding Host, missing CSRF header, foreign Origin, unknown JSON fields, 0600 state file, loopback-only listen), a full login → connect → add source → async backup with SSE → snapshots → ls → restore flow (including the overwrite confirmation), and the scheduler catching up a missed run. The fake storage.bd now also covers the account endpoints, and `go run ./internal/testutil/cmd/fakestorage` runs it standalone for manual UI work. The UI was also driven end to end in headless Chrome (Playwright) at 1280px and 390px, light and dark, with no console errors and no horizontal overflow.
+
 ## Open items
 
 - Re-linking a machine to an *existing* tenant requires a D2C "regenerate install secret" endpoint plus the repo's restic password (escrow recovery is support-gated, §05). Out of scope for v1 by decision.
@@ -69,3 +85,5 @@ Each module is built and then paused for review.
 - storage-bd-api's `GET /d2c/tenants` and `GET /d2c/tenants/:id` return the raw Tenant row, including `restic_password_escrow` (KMS-wrapped ciphertext) and the S3 bucket/prefix. It can't be decrypted without KMS, but the owner's browser/client has no reason to receive it. The API should select only the fields it needs. Not changed here.
 - **Cross-repo bug (not fixed here):** ecp-go (`handler/backup/backup.go` `getRepoURL`) and ehm-api (`storage-bd/host-backup.service.ts`, `storage-bd-restic.service.ts`) mint one 15-minute data token and use it for the whole restic run, so any backup or restore running past ~15 minutes will get 401s partway. Options: a relay like this one, or a longer-lived data token scoped to a single job.
 - MySQL 8 round trip is unverified with Oracle's `mysqldump` (only MariaDB's client tools exist on the dev machine).
+- No retention/pruning yet (`restic forget --prune` by policy). Snapshots accumulate and count against the tenant's quota. Candidate for module 6 or a follow-up.
+- `storagebd serve` has to be running for schedules. The systemd unit comes with module 6 packaging.

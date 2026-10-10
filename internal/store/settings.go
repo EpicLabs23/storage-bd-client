@@ -18,7 +18,7 @@ const (
 )
 
 var knownSettings = map[string]string{
-	SettingResticPath:    "absolute path of the restic binary to run",
+	SettingResticPath:    "Absolute path of the restic binary to run",
 	SettingMySQLDumpPath: "MySQL/MariaDB dump tool (default: mariadb-dump, then mysqldump)",
 	SettingMySQLPath:     "MySQL/MariaDB client used for restores (default: mariadb, then mysql)",
 	SettingPgDumpPath:    "pg_dump binary (default: /usr/bin/pg_dump)",

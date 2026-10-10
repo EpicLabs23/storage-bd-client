@@ -235,3 +235,37 @@ func (s *Session) Restore(ctx context.Context, o RestoreOptions) error {
 func (s *Session) Dump(ctx context.Context, snapshotID, path string, w io.Writer) error {
 	return s.Run(ctx, []string{"dump", "--", snapshotID, path}, RunOptions{Stdout: w})
 }
+
+// Node is one entry of `restic ls --json`.
+type Node struct {
+	Name  string    `json:"name"`
+	Type  string    `json:"type"` // file, dir, symlink, ...
+	Path  string    `json:"path"`
+	Size  int64     `json:"size"`
+	MTime time.Time `json:"mtime"`
+}
+
+// Ls lists the direct children of dir in a snapshot (non-recursive),
+// returning at most limit entries and whether more were cut off.
+func (s *Session) Ls(ctx context.Context, snapshotID, dir string, limit int) ([]Node, bool, error) {
+	if dir == "" {
+		dir = "/"
+	}
+	var nodes []Node
+	truncated := false
+	err := s.Run(ctx, []string{"ls", "--json", "--", snapshotID, dir}, RunOptions{OnLine: func(line []byte) {
+		var n struct {
+			Node
+			StructType string `json:"struct_type"`
+		}
+		if json.Unmarshal(line, &n) != nil || n.StructType != "node" || n.Path == dir {
+			return
+		}
+		if len(nodes) >= limit {
+			truncated = true
+			return
+		}
+		nodes = append(nodes, n.Node)
+	}})
+	return nodes, truncated, err
+}

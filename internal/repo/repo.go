@@ -20,6 +20,28 @@ type Manager struct {
 	Store     *store.Store
 	DataDir   string
 	UserAgent string
+
+	// Token sources are reused across Opens: storage-bd-api rate-limits
+	// /auth/data-token (20/min), and a UI browsing snapshot folders opens
+	// the repo once per click. Keyed by credential identity, so a changed
+	// secret or API URL gets a fresh source.
+	tokensMu sync.Mutex
+	tokens   map[string]*tokenSource
+}
+
+func (m *Manager) tokenSourceFor(cred *store.Credential) *tokenSource {
+	key := cred.APIURL + "|" + cred.TenantID + "|" + cred.InstallID + "|" + cred.InstallSecret
+	m.tokensMu.Lock()
+	defer m.tokensMu.Unlock()
+	if m.tokens == nil {
+		m.tokens = map[string]*tokenSource{}
+	}
+	ts, ok := m.tokens[key]
+	if !ok {
+		ts = &tokenSource{client: api.New(cred.APIURL, m.UserAgent), cred: cred}
+		m.tokens[key] = ts
+	}
+	return ts
 }
 
 // ResticBinary resolves and version-checks the restic binary.
@@ -84,8 +106,8 @@ func (m *Manager) Open(ctx context.Context, cred *store.Credential) (*Opened, er
 	if err != nil {
 		return nil, err
 	}
-	client := api.New(cred.APIURL, m.UserAgent)
-	tokens := &tokenSource{client: client, cred: cred}
+	tokens := m.tokenSourceFor(cred)
+	client := tokens.client
 
 	// Mint once up front: a bad credential or suspended tenant should be
 	// a clear error, not a restic "repository does not exist".

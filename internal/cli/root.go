@@ -85,6 +85,8 @@ func NewRootCmd() *cobra.Command {
 		newRestoreCmd(a),
 		newRestoreDBCmd(a),
 		newJobsCmd(a),
+		newServeCmd(a),
+		newUIURLCmd(a),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the client version",
