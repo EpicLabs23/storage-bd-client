@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"storage-bd-client/internal/execsafe"
 	"storage-bd-client/internal/repo"
 	"storage-bd-client/internal/restic"
 	"storage-bd-client/internal/store"
@@ -215,10 +216,12 @@ func newSettingsCmd(a *app) *cobra.Command {
 					return err
 				}
 				key, value := args[0], args[1]
-				if key == store.SettingResticPath {
-					if err := restic.VerifyBinary(value); err != nil {
+				if store.IsBinarySetting(key) {
+					if err := execsafe.VerifyBinary(value); err != nil {
 						return err
 					}
+				}
+				if key == store.SettingResticPath {
 					if _, err := restic.Version(cmd.Context(), value); err != nil {
 						return err
 					}

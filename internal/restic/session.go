@@ -151,6 +151,10 @@ func (s *Session) Close() error {
 
 // RunOptions controls one restic invocation.
 type RunOptions struct {
+	// Stdin is copied to restic's stdin. If reading it fails (e.g. a
+	// database dump exited non-zero), restic is interrupted *before* it
+	// sees EOF, so `backup --stdin` never commits a snapshot of truncated
+	// data, and Run returns that read error.
 	Stdin  io.Reader
 	Stdout io.Writer    // raw stdout (e.g. `dump`); mutually exclusive with OnLine
 	OnLine func([]byte) // called per stdout line (--json output)
@@ -169,7 +173,6 @@ const stderrLimit = 64 << 10
 func (s *Session) Run(ctx context.Context, args []string, opts RunOptions) error {
 	cmd := exec.CommandContext(ctx, s.bin, args...)
 	cmd.Env = s.env
-	cmd.Stdin = opts.Stdin
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = 30 * time.Second
 
@@ -191,9 +194,37 @@ func (s *Session) Run(ctx context.Context, args []string, opts RunOptions) error
 		cmd.Stdout = opts.Stdout
 	}
 
+	var stdinPipe io.WriteCloser
+	if opts.Stdin != nil {
+		var err error
+		if stdinPipe, err = cmd.StdinPipe(); err != nil {
+			return err
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("could not start restic: %w", err)
 	}
+
+	stdinDone := make(chan error, 1)
+	if stdinPipe != nil {
+		go func() {
+			src := &readErrCapture{r: opts.Stdin}
+			io.Copy(stdinPipe, src) // a write error just means restic exited early
+			if src.err != nil {
+				// Producer failed: interrupt restic while its stdin is still
+				// open. Wait closes the pipe once restic has exited.
+				cmd.Process.Signal(os.Interrupt)
+				stdinDone <- src.err
+				return
+			}
+			stdinPipe.Close()
+			stdinDone <- nil
+		}()
+	} else {
+		stdinDone <- nil
+	}
+
 	if stdout != nil {
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 0, 64<<10), 4<<20)
@@ -203,6 +234,9 @@ func (s *Session) Run(ctx context.Context, args []string, opts RunOptions) error
 		io.Copy(io.Discard, stdout) // drain if a line was oversized
 	}
 	err := cmd.Wait()
+	if stdinErr := <-stdinDone; stdinErr != nil {
+		return fmt.Errorf("input for restic failed, backup aborted: %w", stdinErr)
+	}
 	if err == nil {
 		return nil
 	}
@@ -261,4 +295,19 @@ func (l *lineWriter) flush() {
 		l.fn(l.buf)
 		l.buf = nil
 	}
+}
+
+// readErrCapture records the first non-EOF read error, so Run can tell a
+// failing producer apart from restic closing its stdin.
+type readErrCapture struct {
+	r   io.Reader
+	err error
+}
+
+func (c *readErrCapture) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if err != nil && err != io.EOF && c.err == nil {
+		c.err = err
+	}
+	return n, err
 }

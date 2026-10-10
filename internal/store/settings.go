@@ -9,10 +9,29 @@ import (
 
 // Known setting keys. Unknown keys are rejected so a typo doesn't
 // silently store a setting nothing reads.
-const SettingResticPath = "restic-path"
+const (
+	SettingResticPath    = "restic-path"
+	SettingMySQLDumpPath = "mysqldump-path"
+	SettingMySQLPath     = "mysql-path"
+	SettingPgDumpPath    = "pg_dump-path"
+	SettingPsqlPath      = "psql-path"
+)
 
 var knownSettings = map[string]string{
-	SettingResticPath: "absolute path of the restic binary to run",
+	SettingResticPath:    "absolute path of the restic binary to run",
+	SettingMySQLDumpPath: "MySQL/MariaDB dump tool (default: mariadb-dump, then mysqldump)",
+	SettingMySQLPath:     "MySQL/MariaDB client used for restores (default: mariadb, then mysql)",
+	SettingPgDumpPath:    "pg_dump binary (default: /usr/bin/pg_dump)",
+	SettingPsqlPath:      "psql binary used for restores (default: /usr/bin/psql)",
+}
+
+// IsBinarySetting reports whether key holds a path to an executable.
+func IsBinarySetting(key string) bool {
+	switch key {
+	case SettingResticPath, SettingMySQLDumpPath, SettingMySQLPath, SettingPgDumpPath, SettingPsqlPath:
+		return true
+	}
+	return false
 }
 
 func KnownSettings() map[string]string { return knownSettings }

@@ -98,6 +98,44 @@ var migrations = []string{
 		value      TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	);`,
+
+	// 4: what to back up (sources) and what ran (jobs). db_password sits
+	// next to the repo credentials under the same 0700/0600 protection.
+	// jobs_one_running is the durable per-repo job lock (§19): at most one
+	// running job per credential, enforced by SQLite across processes.
+	`CREATE TABLE sources (
+		id            INTEGER PRIMARY KEY,
+		credential_id INTEGER NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
+		name          TEXT NOT NULL,
+		kind          TEXT NOT NULL CHECK (kind IN ('dir', 'mysql', 'postgres')),
+		path          TEXT NOT NULL DEFAULT '',
+		excludes      TEXT NOT NULL DEFAULT '[]',
+		db_name       TEXT NOT NULL DEFAULT '',
+		db_host       TEXT NOT NULL DEFAULT '',
+		db_port       INTEGER NOT NULL DEFAULT 0,
+		db_socket     TEXT NOT NULL DEFAULT '',
+		db_user       TEXT NOT NULL DEFAULT '',
+		db_password   TEXT NOT NULL DEFAULT '',
+		enabled       INTEGER NOT NULL DEFAULT 1,
+		created_at    TEXT NOT NULL,
+		updated_at    TEXT NOT NULL,
+		UNIQUE (credential_id, name)
+	);
+	CREATE TABLE jobs (
+		id            INTEGER PRIMARY KEY,
+		credential_id INTEGER NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
+		kind          TEXT NOT NULL,
+		trigger       TEXT NOT NULL,
+		status        TEXT NOT NULL,
+		pid           INTEGER NOT NULL,
+		pid_start     TEXT NOT NULL,
+		started_at    TEXT NOT NULL,
+		finished_at   TEXT,
+		detail        TEXT NOT NULL DEFAULT '{}',
+		error         TEXT NOT NULL DEFAULT ''
+	);
+	CREATE UNIQUE INDEX jobs_one_running ON jobs(credential_id) WHERE status = 'running';
+	CREATE INDEX jobs_by_credential ON jobs(credential_id, id DESC);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

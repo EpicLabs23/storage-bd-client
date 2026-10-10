@@ -3,191 +3,21 @@ package repo
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"storage-bd-client/internal/restic"
 	"storage-bd-client/internal/store"
+	"storage-bd-client/internal/testutil"
 )
 
-const (
-	tenantID  = "3f1c2b6e-8a4d-4c1e-9f0a-1b2c3d4e5f60"
-	installID = "9a2e4c6b-1d3f-4a5b-8c7d-9e0f1a2b3c4d"
-)
-
-var installSecret = strings.Repeat("ab", 32)
-
-// fakeStorage is a minimal storage.bd: data-token issuance, escrow, and a
-// restic REST-protocol repo at /repo/ that requires a valid data token,
-// with data/ blob reads redirected to a separate "S3" server (§03).
-type fakeStorage struct {
-	mu          sync.Mutex
-	files       map[string][]byte
-	tokens      map[string]bool
-	issued      int
-	escrowed    string
-	escrowFails bool
-	redirects   int
-	s3SawAuth   bool
-	api, s3     *httptest.Server
-}
-
-func newFakeStorage(t *testing.T) *fakeStorage {
-	f := &fakeStorage{files: map[string][]byte{}, tokens: map[string]bool{}}
-	f.s3 = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		if r.Header.Get("Authorization") != "" {
-			f.s3SawAuth = true
-		}
-		b, ok := f.files[strings.TrimPrefix(r.URL.Path, "/")]
-		f.mu.Unlock()
-		if !ok {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
-	}))
-	f.api = httptest.NewServer(http.HandlerFunc(f.serveAPI))
-	t.Cleanup(func() { f.api.Close(); f.s3.Close() })
-	return f
-}
-
-func (f *fakeStorage) validToken(r *http.Request) bool {
-	_, pass, ok := r.BasicAuth()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return ok && f.tokens[pass]
-}
-
-func (f *fakeStorage) serveAPI(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case r.URL.Path == "/auth/data-token" && r.Method == http.MethodPost:
-		var b map[string]string
-		json.NewDecoder(r.Body).Decode(&b)
-		if b["install_secret"] != installSecret || b["tenant_id"] != tenantID {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		f.mu.Lock()
-		f.issued++
-		tok := fmt.Sprintf("dt-%d", f.issued)
-		f.tokens[tok] = true
-		f.mu.Unlock()
-		json.NewEncoder(w).Encode(map[string]any{"access_token": tok, "token_type": "Bearer", "expires_in": 900})
-	case r.URL.Path == "/escrow/password" && r.Method == http.MethodPut:
-		if !f.validToken(r) {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		if f.escrowFails {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		var b map[string]string
-		json.NewDecoder(r.Body).Decode(&b)
-		f.mu.Lock()
-		f.escrowed = b["password"]
-		f.mu.Unlock()
-		w.WriteHeader(http.StatusNoContent)
-	case strings.HasPrefix(r.URL.Path, "/repo/"):
-		if !f.validToken(r) {
-			w.WriteHeader(http.StatusUnauthorized)
-			return
-		}
-		f.serveRepo(w, r, strings.TrimPrefix(r.URL.Path, "/repo/"))
-	default:
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-func (f *fakeStorage) serveRepo(w http.ResponseWriter, r *http.Request, p string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	switch {
-	case p == "" && r.Method == http.MethodPost: // create repo
-		w.WriteHeader(http.StatusOK)
-	case strings.HasSuffix(p, "/") && r.Method == http.MethodGet: // list type
-		prefix := p
-		type entry struct {
-			Name string `json:"name"`
-			Size int    `json:"size"`
-		}
-		var v2 []entry
-		var v1 []string
-		for k, b := range f.files {
-			if strings.HasPrefix(k, prefix) {
-				name := strings.TrimPrefix(k, prefix)
-				v2 = append(v2, entry{name, len(b)})
-				v1 = append(v1, name)
-			}
-		}
-		sort.Strings(v1)
-		if strings.Contains(r.Header.Get("Accept"), "vnd.x.restic.rest.v2") {
-			w.Header().Set("Content-Type", "application/vnd.x.restic.rest.v2")
-			if v2 == nil {
-				v2 = []entry{}
-			}
-			json.NewEncoder(w).Encode(v2)
-			return
-		}
-		if v1 == nil {
-			v1 = []string{}
-		}
-		json.NewEncoder(w).Encode(v1)
-	default:
-		b, exists := f.files[p]
-		switch r.Method {
-		case http.MethodHead:
-			if !exists {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			w.Header().Set("Content-Length", fmt.Sprint(len(b)))
-		case http.MethodGet:
-			if !exists {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			if strings.HasPrefix(p, "data/") {
-				f.redirects++
-				http.Redirect(w, r, f.s3.URL+"/"+p, http.StatusFound)
-				return
-			}
-			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
-		case http.MethodPost:
-			data, _ := io.ReadAll(r.Body)
-			f.files[p] = data
-		case http.MethodDelete:
-			delete(f.files, p)
-		}
-	}
-}
-
-func resticOrSkip(t *testing.T) string {
-	for _, p := range []string{os.Getenv(restic.EnvBinary), "/usr/bin/restic", "/usr/local/bin/restic"} {
-		if p != "" && restic.VerifyBinary(p) == nil {
-			return p
-		}
-	}
-	t.Skip("no usable restic binary; set STORAGEBD_RESTIC")
-	return ""
-}
-
-func setup(t *testing.T) (*Manager, *store.Credential, *fakeStorage) {
+func setup(t *testing.T) (*Manager, *store.Credential, *testutil.FakeStorage) {
 	t.Helper()
-	bin := resticOrSkip(t)
-	f := newFakeStorage(t)
+	bin := testutil.ResticOrSkip(t)
+	f := testutil.NewFakeStorage(t)
 	dir := t.TempDir()
 	s, err := store.Open(filepath.Join(dir, "t.db"))
 	if err != nil {
@@ -199,8 +29,8 @@ func setup(t *testing.T) (*Manager, *store.Credential, *fakeStorage) {
 		t.Fatal(err)
 	}
 	pw, _ := store.GenerateResticPassword()
-	cred := &store.Credential{Name: "test", APIURL: f.api.URL, TenantID: tenantID, InstallID: installID,
-		InstallSecret: installSecret, ResticPassword: pw}
+	cred := &store.Credential{Name: "test", APIURL: f.API.URL, TenantID: testutil.TenantID, InstallID: testutil.InstallID,
+		InstallSecret: testutil.InstallSecret, ResticPassword: pw}
 	if err := s.CreateCredential(ctx, cred); err != nil {
 		t.Fatal(err)
 	}
@@ -218,10 +48,10 @@ func TestOpenInitializesAndEscrowsOnce(t *testing.T) {
 	if len(o.Warnings) != 0 {
 		t.Fatalf("warnings: %v", o.Warnings)
 	}
-	if f.escrowed != cred.ResticPassword {
+	if f.Escrowed != cred.ResticPassword {
 		t.Fatal("password not escrowed")
 	}
-	if _, ok := f.files["config"]; !ok {
+	if _, ok := f.Files["config"]; !ok {
 		t.Fatal("repo not initialized")
 	}
 	stored, _ := m.Store.GetCredentialByName(ctx, "test")
@@ -230,13 +60,13 @@ func TestOpenInitializesAndEscrowsOnce(t *testing.T) {
 	}
 
 	// Second open: no re-init, no re-escrow.
-	f.escrowed = ""
+	f.Escrowed = ""
 	o, err = m.Open(ctx, stored)
 	if err != nil {
 		t.Fatal(err)
 	}
 	o.Close()
-	if f.escrowed != "" {
+	if f.Escrowed != "" {
 		t.Fatal("escrowed again")
 	}
 	// Password file is gone after Close.
@@ -284,10 +114,10 @@ func TestBackupSnapshotsRestoreViaRedirect(t *testing.T) {
 	if info, err := os.Stat(filepath.Join(target, src, "sub", "b.bin")); err != nil || info.Size() != 3<<20 {
 		t.Fatalf("restored b.bin: %v", err)
 	}
-	if f.redirects == 0 {
+	if f.Redirects == 0 {
 		t.Fatal("restore never took the presigned-redirect path")
 	}
-	if f.s3SawAuth {
+	if f.S3SawAuth {
 		t.Fatal("relay nonce leaked to the redirect target")
 	}
 }
@@ -360,7 +190,7 @@ func TestExistingRepoWithWrongPassword(t *testing.T) {
 func TestEscrowFailureWarnsAndRetries(t *testing.T) {
 	m, cred, f := setup(t)
 	ctx := context.Background()
-	f.escrowFails = true
+	f.EscrowFails = true
 	o, err := m.Open(ctx, cred)
 	if err != nil {
 		t.Fatal(err)
@@ -373,13 +203,13 @@ func TestEscrowFailureWarnsAndRetries(t *testing.T) {
 	if stored.PasswordEscrowedAt != nil || stored.RepoInitializedAt == nil {
 		t.Fatalf("state = %+v", stored)
 	}
-	f.escrowFails = false
+	f.EscrowFails = false
 	o, err = m.Open(ctx, stored)
 	if err != nil {
 		t.Fatal(err)
 	}
 	o.Close()
-	if f.escrowed != cred.ResticPassword {
+	if f.Escrowed != cred.ResticPassword {
 		t.Fatal("escrow not retried")
 	}
 }
@@ -391,7 +221,7 @@ func TestBadInstallSecretFailsBeforeRestic(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "rejected this credential") {
 		t.Fatalf("err = %v", err)
 	}
-	if len(f.files) != 0 {
+	if len(f.Files) != 0 {
 		t.Fatal("restic touched the repo")
 	}
 	var re *restic.Error
