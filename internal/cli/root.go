@@ -91,6 +91,7 @@ func NewRootCmd() *cobra.Command {
 		newRetentionCmd(a),
 		newCleanupCmd(a),
 		newUIURLCmd(a),
+		newUpgradeCmd(a),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the client version",

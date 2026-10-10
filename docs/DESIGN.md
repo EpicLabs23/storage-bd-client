@@ -102,6 +102,17 @@ restic ≥ 0.17 does **not** exit on SIGINT while blocked reading a stdin pipe t
 
 An earlier claim that the suite passed on 0.19.1 (module 6) was wrong. `dist/restic/linux_amd64/` was group-writable (umask), storagebd correctly refused it, and the test helper silently fell back to `/usr/bin/restic` 0.16.4. Fixed both: `fetch-restic.sh` sets 0755 on its directories, and `testutil.ResticOrSkip` now fails if `$STORAGEBD_RESTIC` is set but unusable and logs the restic version under test. The suite and the MariaDB/Postgres round trips have now really been run on 0.19.1 and 0.16.4.
 
+## Signed upgrades (`storagebd upgrade`)
+
+- **Why:** `get.sh` is fetched from GitHub on every run, so it can only prove a download matches what GitHub serves. Whoever controls the GitHub repo controls both. `storagebd upgrade` instead checks releases against a key built into the binary that's already installed. After the first install, a malicious upgrade needs the offline signing key, not just access to the repo. The first install still trusts GitHub (and HTTPS).
+- **Format:** minisign, prehashed Ed25519 (`ED`: Ed25519 over BLAKE2b-512). Verified in Go (`internal/update`, stdlib ed25519 + `golang.org/x/crypto/blake2b`), so no host tool is needed. The legacy unhashed `Ed` format is refused. Interop is pinned by a test vector made with an independent minisign implementation (`internal/update/testdata/reference.*`).
+- **What's signed:** `SHA256SUMS`, as `SHA256SUMS.minisig`, with the trusted comment `storagebd <version>`. The comment is covered by the signature, and upgrade requires it to equal the tag it asked for. That stops an older, genuinely signed `SHA256SUMS` being served under a newer tag. The tarball must then match the signed checksum.
+- **Keys:** `internal/update/keys/*.pub`, embedded with `go:embed`. More than one key may be listed, for rotation. `scripts/sign-release.sh` (`make sign`) refuses to sign unless the key it signs with verifies against one of the committed public keys, so a release can't be signed with a key its own binaries don't trust.
+- **Flow:** find the target (`releases/latest` redirect, or `--version`) → refuse a downgrade unless `--version` asks for it, and refuse development builds without `--version` → download SHA256SUMS + signature (size-capped) → verify → download the tarball (capped at 512 MiB), hashing as it streams → unpack only regular files directly inside `storagebd_<v>_linux_<arch>/` (no links, subdirectories or `..`) into a 0700 temp dir → run its `install.sh` with `/bin/sh`.
+- **Install mode** comes from where the running binary is: `/usr/local/bin/storagebd` as root means the system layout, `~/.local/bin/storagebd` as a regular user means `--user`. Anything else is refused, rather than guessing what to replace. If the service isn't active, `--no-start` is passed, so an upgrade never starts a service the user had left stopped.
+- **v0.1.0** predates signing and has no `upgrade` command. Users move to v0.1.1 with `get.sh` once.
+- **Not covered:** an end-to-end upgrade run through `install.sh` on a real host. That's a release-checklist step (`docs/RELEASING.md`).
+
 ## Open items
 
 - Re-linking a machine to an *existing* tenant requires a D2C "regenerate install secret" endpoint plus the repo's restic password (escrow recovery is support-gated, §05). Out of scope for v1 by decision.

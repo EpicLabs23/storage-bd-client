@@ -66,9 +66,10 @@ curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/g
 
 ## Manual install
 
-1. Download `storagebd_<version>_linux_<arch>.tar.gz` and `SHA256SUMS` from the [releases page](https://github.com/EpicLabs23/storage-bd-client/releases).
-2. Verify and unpack:
+1. Download `storagebd_<version>_linux_<arch>.tar.gz`, `SHA256SUMS` and `SHA256SUMS.minisig` from the [releases page](https://github.com/EpicLabs23/storage-bd-client/releases).
+2. Verify and unpack. The first command checks the release signature with [minisign](https://jedisct1.github.io/minisign/) and the [release public key](../internal/update/keys/); it should print `Trusted comment: storagebd <version>`. Releases before v0.1.1 aren't signed.
    ```sh
+   minisign -V -p storagebd-release.pub -m SHA256SUMS
    sha256sum -c --ignore-missing SHA256SUMS
    tar xzf storagebd_v0.1.0_linux_amd64.tar.gz
    cd storagebd_v0.1.0_linux_amd64
@@ -114,13 +115,25 @@ No systemd (for example in a container)? Start it yourself with `sudo storagebd 
 
 ## Upgrade
 
-Run the install command again. It installs the new version and restarts the service. Your settings, credentials and history stay where they are (`/var/lib/storagebd`), and upgrades update the database format automatically.
+From v0.1.1 on, upgrade with storagebd itself:
+
+```sh
+sudo storagebd upgrade           # server-wide install
+storagebd upgrade                # --user install
+```
+
+It downloads the latest release and installs it only if the release is signed with the storagebd release key built into the version you're running. That check doesn't depend on GitHub: a release someone else uploaded, or an old release passed off as a new one, is refused. Then it installs the new version the same way the current one was installed and restarts the service if it was running. Your settings, credentials and history stay where they are (`/var/lib/storagebd`), and upgrades update the database format automatically.
+
+- `storagebd upgrade --check` only shows whether a newer release is available.
+- `storagebd upgrade --version v0.2.0` installs a specific release, including an older one.
+
+If a backup is running, the service stops it cleanly first. Run it again afterwards, or let the schedule do it.
+
+**From v0.1.0**, which has no `upgrade` command, run the install command once more:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo sh
 ```
-
-If a backup is running, the service stops it cleanly first. Run it again afterwards, or let the schedule do it.
 
 ## Uninstall
 

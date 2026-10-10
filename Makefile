@@ -5,7 +5,7 @@ API_URL ?= https://api.storage.bd
 PKG     := storage-bd-client/internal/cli
 LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).DefaultAPIURL=$(API_URL)
 
-.PHONY: build build-all test vet clean release restic
+.PHONY: build build-all test vet clean release restic sign
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/storagebd ./cmd/storagebd
 
@@ -26,6 +26,10 @@ restic:
 # Release tarballs + SHA256SUMS in dist/: make release VERSION=v0.1.0
 release:
 	scripts/build-release.sh $(VERSION) $(API_URL)
+
+# dist/SHA256SUMS.minisig, for `storagebd upgrade`: make sign VERSION=v0.1.1
+sign:
+	scripts/sign-release.sh $(VERSION)
 
 clean:
 	rm -rf bin dist/stage

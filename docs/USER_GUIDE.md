@@ -360,6 +360,7 @@ Run `storagebd <command> --help` for every option. Commands act on the default b
 | `settings list\|set\|unset` | Program paths |
 | `serve` | Run the web page and scheduler (the service does this) |
 | `ui-url` | Print the web page's private link |
+| `upgrade` | Install the latest signed release (`--check` to only look) |
 | `version` | storagebd and restic versions |
 | `completion bash\|zsh\|fish` | Shell completion script |
 

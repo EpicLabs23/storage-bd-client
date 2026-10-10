@@ -1,5 +1,20 @@
 # Releasing (maintainers)
 
+## One-time: the release signing key
+
+`storagebd upgrade` only installs a release whose `SHA256SUMS` is signed with a key built into the installed storagebd (`internal/update/keys/*.pub`). Create the key once, with [minisign](https://jedisct1.github.io/minisign/) (`sudo apt install minisign`, or `go install aead.dev/minisign/cmd/minisign@latest`):
+
+```sh
+minisign -G -p internal/update/keys/storagebd-release.pub -s ~/.minisign/storagebd-release.key
+```
+
+- Choose a strong password. Commit the `.pub` file; it must be in the commit you release.
+- Keep the secret key and its password offline and backed up. If it's lost, existing installs can't verify upgrades signed with a new key; their users have to reinstall with `get.sh` once.
+- If the key leaks, anyone with it can sign upgrades that existing installs will accept. Release a version with a new key as soon as you can.
+- **Rotating:** add the new `.pub` next to the old one and release. Sign with the new key from the release after that, and remove the old `.pub` once no supported version needs it.
+
+## Each release
+
 Set the version once, in the shell you'll run the release from. Every command below reads it:
 ```sh
 export VERSION=v0.1.0
@@ -19,12 +34,19 @@ export VERSION=v0.1.0
    make release VERSION="$VERSION"
    ```
    This writes `dist/storagebd_${VERSION}_linux_{amd64,arm64}.tar.gz` and `dist/SHA256SUMS`. Builds are reproducible: the same commit gives the same files.
-5. **Smoke-test** a tarball on a clean machine or VM: `sudo ./install.sh`, open `sudo storagebd ui-url`, run a backup, then `systemctl stop storagebd` during a backup and check the next one starts cleanly.
-6. **Publish** on GitHub with exactly these asset names, since `get.sh` builds its download URLs from them:
+5. **Sign** (asks for the key's password):
    ```sh
-   gh release create "$VERSION" "dist/storagebd_${VERSION}_linux_amd64.tar.gz" "dist/storagebd_${VERSION}_linux_arm64.tar.gz" dist/SHA256SUMS \
-     --verify-tag --title "$VERSION" --notes-file "CHANGES-${VERSION}.md"
+   make sign VERSION="$VERSION"
    ```
-   Mark it as the latest release: `get.sh` installs whatever `releases/latest` points to.
-7. **Check the one-liner** on a clean machine:
+   This writes `dist/SHA256SUMS.minisig` with the trusted comment `storagebd $VERSION`, then checks it against the keys in `internal/update/keys/`. It refuses if the key isn't one of them, or if `dist/SHA256SUMS` is for another version. The secret key is read from `~/.minisign/storagebd-release.key`; set `STORAGEBD_SIGNING_KEY` to use another path.
+6. **Smoke-test** a tarball on a clean machine or VM: `sudo ./install.sh`, open `sudo storagebd ui-url`, run a backup, then `systemctl stop storagebd` during a backup and check the next one starts cleanly.
+7. **Publish** on GitHub with exactly these asset names, since `get.sh` and `storagebd upgrade` build their download URLs from them:
+   ```sh
+   gh release create "$VERSION" "dist/storagebd_${VERSION}_linux_amd64.tar.gz" "dist/storagebd_${VERSION}_linux_arm64.tar.gz" \
+     dist/SHA256SUMS dist/SHA256SUMS.minisig \
+     --verify-tag --latest --title "$VERSION" --notes-file "CHANGES-${VERSION}.md"
+   ```
+   It must be the latest release: `get.sh` and `storagebd upgrade` install whatever `releases/latest` points to.
+8. **Check the one-liner** on a clean machine:
    `curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo sh`
+9. **Check `storagebd upgrade`** on a machine running the previous release: `sudo storagebd upgrade --check`, then `sudo storagebd upgrade`. It should print `Signature OK` and restart the service.
