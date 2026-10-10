@@ -56,6 +56,7 @@ func StatusOf(err error) int {
 type request struct {
 	method, path string
 	bearer       string
+	basicPass    string // data-plane routes take the data token as Basic-auth password
 	cookie       *http.Cookie
 	body         any
 }
@@ -82,6 +83,9 @@ func (c *Client) do(ctx context.Context, r request, out any) (*http.Response, er
 	}
 	if r.bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+r.bearer)
+	}
+	if r.basicPass != "" {
+		req.SetBasicAuth("storagebd", r.basicPass)
 	}
 	if r.cookie != nil {
 		req.AddCookie(r.cookie)
@@ -289,4 +293,13 @@ func (c *Client) DataToken(ctx context.Context, tenantID, installID, installSecr
 		return nil, errors.New("storage.bd returned an empty data token")
 	}
 	return &out, nil
+}
+
+// EscrowPassword submits the repo's restic password for KMS-envelope
+// escrow (§05). Called once after init (and after a rotation). The
+// password crosses the wire exactly here; never log the request.
+func (c *Client) EscrowPassword(ctx context.Context, dataToken, password string) error {
+	_, err := c.do(ctx, request{method: http.MethodPut, path: "/escrow/password", basicPass: dataToken,
+		body: map[string]string{"password": password}}, nil)
+	return err
 }

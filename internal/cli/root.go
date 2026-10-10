@@ -23,6 +23,7 @@ var (
 
 type app struct {
 	homeFlag string
+	dataDir  string
 	store    *store.Store
 }
 
@@ -44,6 +45,7 @@ func (a *app) openStore() (*store.Store, error) {
 		return nil, err
 	}
 	a.store = s
+	a.dataDir = dir
 	return s, nil
 }
 
@@ -75,6 +77,9 @@ func NewRootCmd() *cobra.Command {
 		newAccountCmd(a),
 		newConnectCmd(a),
 		newActivateCmd(a),
+		newRepoCmd(a),
+		newSnapshotsCmd(a),
+		newSettingsCmd(a),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the client version",

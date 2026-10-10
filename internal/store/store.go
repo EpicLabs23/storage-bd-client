@@ -90,6 +90,14 @@ var migrations = []string{
 		access_expires_at  TEXT,
 		updated_at         TEXT NOT NULL
 	);`,
+
+	// 3: runtime-changeable client settings (restic path for now; schedule
+	// and UI settings later). Validated per key in settings.go.
+	`CREATE TABLE settings (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
