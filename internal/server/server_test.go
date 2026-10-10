@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -321,5 +322,79 @@ func TestScheduleNextDaily(t *testing.T) {
 	from = time.Date(2026, 10, 10, 2, 0, 0, 0, time.Local)
 	if n := s.Next(from); !n.Equal(time.Date(2026, 10, 11, 2, 0, 0, 0, time.Local)) {
 		t.Fatalf("next-day next = %v", n)
+	}
+}
+
+func waitJobs(t *testing.T, st *store.Store, credID int64, want int) []*store.Job {
+	t.Helper()
+	for i := 0; ; i++ {
+		list, _ := st.ListJobs(context.Background(), credID, 20)
+		done := 0
+		for _, j := range list {
+			if j.Status != store.StatusRunning {
+				done++
+			}
+		}
+		if done >= want {
+			return list
+		}
+		if i > 200 {
+			t.Fatalf("only %d of %d jobs finished: %+v", done, want, list)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func TestRetentionAPIAndAfterBackupCleanup(t *testing.T) {
+	hs := start(t)
+	ctx := context.Background()
+	c := hs.client(t)
+	st := hs.srv.Store
+	pw, _ := store.GenerateResticPassword()
+	cred := &store.Credential{Name: "r", APIURL: hs.fake.API.URL, TenantID: testutil.TenantID,
+		InstallID: testutil.InstallID, InstallSecret: testutil.InstallSecret, ResticPassword: pw}
+	st.CreateCredential(ctx, cred)
+	src := t.TempDir()
+	os.WriteFile(filepath.Join(src, "f"), []byte("x"), 0o600)
+	st.CreateSource(ctx, &store.Source{CredentialID: cred.ID, Name: "s", Kind: store.KindDir, Path: src, Enabled: true})
+
+	// No policy yet: suggestion offered, cleanup refused.
+	code, out := call(t, c, "GET", hs.base+"/api/credentials/r/retention", "", nil)
+	if code != 200 || out["policy"] != nil || out["suggested"] == nil {
+		t.Fatalf("get: %d %v", code, out)
+	}
+	if code, _ = call(t, c, "POST", hs.base+"/api/credentials/r/cleanup", `{}`, csrf); code != 400 {
+		t.Fatalf("cleanup without policy: %d", code)
+	}
+	if code, _ = call(t, c, "PUT", hs.base+"/api/credentials/r/retention", `{"keep_daily":0}`, csrf); code != 400 {
+		t.Fatalf("keep-nothing policy accepted: %d", code)
+	}
+
+	// Two backups, then a keep-last-1 policy: preview says 1 would go.
+	for i := 0; i < 2; i++ {
+		os.WriteFile(filepath.Join(src, "f"), []byte(fmt.Sprint(i)), 0o600)
+		if _, _, err := hs.srv.Runner.Backup(ctx, cred, jobs.BackupOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	code, out = call(t, c, "POST", hs.base+"/api/credentials/r/retention/preview", `{"keep_last":1}`, csrf)
+	if code != 200 || out["removed"] != float64(1) || out["dry_run"] != true {
+		t.Fatalf("preview: %d %v", code, out)
+	}
+	if code, _ = call(t, c, "PUT", hs.base+"/api/credentials/r/retention", `{"keep_last":1,"prune_interval_days":7}`, csrf); code != 200 {
+		t.Fatalf("put: %d", code)
+	}
+
+	// A UI-started backup applies the policy afterwards, as its own job.
+	if code, _ = call(t, c, "POST", hs.base+"/api/credentials/r/backup", `{}`, csrf); code != 202 {
+		t.Fatalf("backup: %d", code)
+	}
+	list := waitJobs(t, st, cred.ID, 4) // 2 direct backups + UI backup + cleanup
+	if list[0].Kind != store.JobCleanup || list[0].Status != store.StatusOK || !strings.Contains(string(list[0].Detail), `"removed":2`) {
+		t.Fatalf("after-backup cleanup: %+v %s", list[0], list[0].Detail)
+	}
+	rt, _ := st.GetRetention(ctx, cred.ID)
+	if rt.LastForgetAt == nil || rt.LastPruneAt == nil {
+		t.Fatalf("retention times: %+v", rt)
 	}
 }

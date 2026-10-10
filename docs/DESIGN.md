@@ -31,7 +31,7 @@ Each module is built and then paused for review.
 3. **restic wrapper** — done. `storagebd repo init|status`, `storagebd snapshots`, `storagebd settings list|set|unset`. Details below.
 4. **Sources + jobs** — done. `storagebd source list|add-dir|add-db|update|remove`, `backup`, `restore`, `restore-db`, `jobs`. Details below.
 5. **`storagebd serve`** — done. Local web UI + scheduler, `storagebd ui-url`. Details below.
-6. **Packaging**: bundled restic per arch, install script, systemd unit, release build.
+6. **Packaging** — done. Pinned, signature-verified restic, release tarballs, installer, systemd units. Details below.
 
 ## Account session (module 2)
 
@@ -78,6 +78,30 @@ Each module is built and then paused for review.
 - **Data-token reuse:** `repo.Manager` now caches token sources per credential. storage-bd-api rate-limits `/auth/data-token` to 20/min, and browsing snapshot folders opens the repo once per click.
 - **Tests:** `internal/server/server_test.go` covers the auth/hardening rules (bad token, rebinding Host, missing CSRF header, foreign Origin, unknown JSON fields, 0600 state file, loopback-only listen), a full login → connect → add source → async backup with SSE → snapshots → ls → restore flow (including the overwrite confirmation), and the scheduler catching up a missed run. The fake storage.bd now also covers the account endpoints, and `go run ./internal/testutil/cmd/fakestorage` runs it standalone for manual UI work. The UI was also driven end to end in headless Chrome (Playwright) at 1280px and 390px, light and dark, with no console errors and no horizontal overflow.
 
+## Packaging (module 6)
+
+- **Pinned restic** (`packaging/restic.lock`, committed): written only by `scripts/update-restic-pin.sh <version>`. That script imports `https://restic.net/gpg-key-alex.asc` into a throwaway GNUPGHOME, requires the fingerprint published in restic's install docs (`CF8F18F2844575973F79D4E191A6868BD3F7A907`) among the file's primary keys (the file holds two keys), verifies `SHA256SUMS.asc` was made by that key or one of its subkeys, then records the linux amd64/arm64 checksums plus restic's LICENSE checksum. `scripts/fetch-restic.sh` (`make restic`) downloads into `dist/cache` and refuses anything that doesn't match the lock. Pinned now: **restic 0.19.1** (2026-07-05).
+- **0.19.1 compatibility:** the full suite (including the real-restic repo/jobs/server tests) and the real MariaDB/Postgres round trips pass on both 0.19.1 and the system's 0.16.4 (`STORAGEBD_RESTIC=dist/restic/linux_amd64/restic make test`). Verified for real only during the retention work; see "restic 0.17+ and aborted stdin backups" below.
+- **Release:** `make release VERSION=v0.1.0 [API_URL=https://...]` → `scripts/build-release.sh` builds `dist/storagebd_<v>_linux_{amd64,arm64}.tar.gz` (storagebd, restic, LICENSE.restic, install.sh, both units, README.txt, RELEASE, per-tarball SHA256SUMS) and `dist/SHA256SUMS`. It refuses a non-https API URL. Builds are reproducible (CGO off, `-trimpath`, owner 0:0, normalized modes, mtimes = commit time): two builds of the same tree produce identical tarball hashes.
+- **Install** (`install.sh`): checks SHA256SUMS first. `sudo ./install.sh` puts storagebd in `/usr/local/bin`, restic in `/usr/local/lib/storagebd/restic` (both root:root 0755, which storagebd's binary check requires) and `/etc/systemd/system/storagebd.service`; data goes in `/var/lib/storagebd` (0700); then enable + start, or print the manual command when there's no systemd. `./install.sh --user` uses `~/.local` and a user unit. `--uninstall` keeps the data. `--purge` deletes it only after `PURGE` is typed on a TTY (it holds the restic passwords).
+- **restic lookup** now also checks `<exe>/../lib/storagebd/restic`, covering both install prefixes, before the binary's own directory. `storagebd version` prints the restic it found.
+- **systemd unit** runs as root (backups must read everything, restores write anywhere). Hardening is limited to what doesn't interfere with that: NoNewPrivileges, Protect{KernelTunables,KernelModules,KernelLogs,ControlGroups,Clock,Hostname}, RestrictRealtime/Namespaces, LockPersonality, native syscalls, AF_UNIX/INET/INET6 only, UMask 0077, StateDirectory 0700, TimeoutStopSec=90 (time for restic to drop its lock). PrivateTmp and RestrictSUIDSGID are deliberately left out: a restore to /tmp would vanish into a private namespace, and restores must keep setuid bits.
+- **Tested** in a throwaway ubuntu:24.04 container: root install (ownership/modes, bundled restic found, serve + ui-url, serve.json removed on shutdown), tampered release refused, `--user` install as a regular user, `--user` as root refused, purge without a TTY refused, uninstall. **Not tested:** the unit actually starting under systemd. That needs a real systemd host and root; it's a manual check.
+
+## Old-snapshot cleanup (retention)
+
+- **Policy per credential** (migration 6 `retention`): keep last / daily / weekly / monthly / yearly, and how often to free space (`prune_interval_days`, default 7). There's no policy until one is set, so nothing is deleted on its own. The UI suggests 7 daily / 4 weekly / 12 monthly, and the overview shows a banner while backups exist with no policy. A policy that keeps nothing is rejected.
+- **What it touches:** `restic forget --tag storagebd --group-by tags <keep…>`, so only snapshots storagebd made, with the rules applied per source (each source's tag set is its own group). restic's keep rules always keep the newest snapshot of every group, so a source can never be emptied (tested).
+- **When:** `jobs.Runner.AfterBackup` runs a separate `cleanup` job (its own job record) after every backup that produced snapshots (succeeded or partial), from the CLI (`backup`, unless `--no-cleanup`), the UI and the scheduler. A failed backup skips cleanup. `forget` only removes snapshot records. `prune`, which actually frees space but may read partly-used packs back (egress, metered by storage.bd), runs only when the interval has passed or when forced (`cleanup --prune`, the "also free space now" checkbox).
+- **Preview:** `cleanup --dry-run` / the UI's Preview button runs `forget --dry-run` with the current or unsaved rules and lists exactly which snapshots would go. It doesn't take the job lock.
+- **CLI:** `storagebd retention show|set|off`, `storagebd cleanup [--dry-run|--prune]`. **UI:** "Schedule & cleanup" page, "Keep old backups" card; cleanup jobs appear in Activity with per-source counts and the prune report.
+
+### restic 0.17+ and aborted stdin backups (found while testing this)
+
+restic ≥ 0.17 does **not** exit on SIGINT while blocked reading a stdin pipe that's still open (0.16 did). The "a failed dump never becomes a snapshot" rule depends on keeping stdin open while restic is stopped, so on 0.19.1 a failed DB dump hung the backup forever. `Session.Run` now sends SIGINT, waits `abortGrace` (10s), then SIGKILLs. A killed restic can't commit a snapshot. After a kill it runs `restic unlock` (which only removes stale locks) to clear the lock the killed process left; the test asserts zero snapshots and zero leftover locks.
+
+An earlier claim that the suite passed on 0.19.1 (module 6) was wrong. `dist/restic/linux_amd64/` was group-writable (umask), storagebd correctly refused it, and the test helper silently fell back to `/usr/bin/restic` 0.16.4. Fixed both: `fetch-restic.sh` sets 0755 on its directories, and `testutil.ResticOrSkip` now fails if `$STORAGEBD_RESTIC` is set but unusable and logs the restic version under test. The suite and the MariaDB/Postgres round trips have now really been run on 0.19.1 and 0.16.4.
+
 ## Open items
 
 - Re-linking a machine to an *existing* tenant requires a D2C "regenerate install secret" endpoint plus the repo's restic password (escrow recovery is support-gated, §05). Out of scope for v1 by decision.
@@ -85,5 +109,5 @@ Each module is built and then paused for review.
 - storage-bd-api's `GET /d2c/tenants` and `GET /d2c/tenants/:id` return the raw Tenant row, including `restic_password_escrow` (KMS-wrapped ciphertext) and the S3 bucket/prefix. It can't be decrypted without KMS, but the owner's browser/client has no reason to receive it. The API should select only the fields it needs. Not changed here.
 - **Cross-repo bug (not fixed here):** ecp-go (`handler/backup/backup.go` `getRepoURL`) and ehm-api (`storage-bd/host-backup.service.ts`, `storage-bd-restic.service.ts`) mint one 15-minute data token and use it for the whole restic run, so any backup or restore running past ~15 minutes will get 401s partway. Options: a relay like this one, or a longer-lived data token scoped to a single job.
 - MySQL 8 round trip is unverified with Oracle's `mysqldump` (only MariaDB's client tools exist on the dev machine).
-- No retention/pruning yet (`restic forget --prune` by policy). Snapshots accumulate and count against the tenant's quota. Candidate for module 6 or a follow-up.
 - `storagebd serve` has to be running for schedules. The systemd unit comes with module 6 packaging.
+- Manual check pending: `sudo ./install.sh` on a real systemd host (unit starts, `sudo storagebd ui-url` works, `systemctl stop` lets restic release its lock).

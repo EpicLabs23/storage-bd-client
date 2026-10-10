@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -104,6 +105,8 @@ type BackupOptions struct {
 	Tags     []string
 	Excludes []string
 	Host     string
+	// Time overrides the snapshot's timestamp (tests and imports).
+	Time     time.Time
 	OnStatus func(Progress)
 }
 
@@ -116,6 +119,9 @@ func (s *Session) Backup(ctx context.Context, o BackupOptions) (*BackupSummary, 
 	args := []string{"backup", "--json"}
 	if o.Host != "" {
 		args = append(args, "--host", o.Host)
+	}
+	if !o.Time.IsZero() {
+		args = append(args, "--time", o.Time.Local().Format("2006-01-02 15:04:05"))
 	}
 	for _, t := range o.Tags {
 		args = append(args, "--tag", t)
@@ -268,4 +274,81 @@ func (s *Session) Ls(ctx context.Context, snapshotID, dir string, limit int) ([]
 		nodes = append(nodes, n.Node)
 	}})
 	return nodes, truncated, err
+}
+
+// Keep is a restic keep policy. Zero fields are omitted.
+type Keep struct {
+	Last, Daily, Weekly, Monthly, Yearly int
+}
+
+func (k Keep) args() []string {
+	var a []string
+	add := func(flag string, n int) {
+		if n > 0 {
+			a = append(a, flag, strconv.Itoa(n))
+		}
+	}
+	add("--keep-last", k.Last)
+	add("--keep-daily", k.Daily)
+	add("--keep-weekly", k.Weekly)
+	add("--keep-monthly", k.Monthly)
+	add("--keep-yearly", k.Yearly)
+	return a
+}
+
+// ForgetGroup is one group of `restic forget --json` output.
+type ForgetGroup struct {
+	Tags   []string   `json:"tags"`
+	Keep   []Snapshot `json:"keep"`
+	Remove []Snapshot `json:"remove"`
+}
+
+// Forget applies keep to the snapshots carrying all of tags, grouped by
+// their tag set (one group per source). It only removes snapshot records;
+// Prune frees the data. DryRun reports what would be removed.
+func (s *Session) Forget(ctx context.Context, tags []string, keep Keep, dryRun bool) ([]ForgetGroup, error) {
+	ka := keep.args()
+	if len(ka) == 0 {
+		return nil, errors.New("forget needs at least one keep rule")
+	}
+	args := []string{"forget", "--json", "--group-by", "tags"}
+	if len(tags) > 0 {
+		args = append(args, "--tag", strings.Join(tags, ","))
+	}
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
+	args = append(args, ka...)
+	var out strings.Builder
+	if err := s.Run(ctx, args, RunOptions{Stdout: &out}); err != nil {
+		return nil, err
+	}
+	var groups []ForgetGroup
+	if txt := strings.TrimSpace(out.String()); txt != "" && txt != "null" {
+		if err := json.Unmarshal([]byte(txt), &groups); err != nil {
+			return nil, fmt.Errorf("could not parse restic forget output: %w", err)
+		}
+	}
+	return groups, nil
+}
+
+// Prune deletes data no snapshot references any more. It returns restic's
+// human-readable report (progress-bar lines dropped) for the job record.
+// Repacking partly-used packs reads them back first, which is egress;
+// callers run this sparingly.
+func (s *Session) Prune(ctx context.Context) (string, error) {
+	var out strings.Builder
+	err := s.Run(ctx, []string{"prune"}, RunOptions{Stdout: &out})
+	var lines []string
+	for _, l := range strings.Split(out.String(), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "[") {
+			continue
+		}
+		lines = append(lines, l)
+	}
+	if len(lines) > 60 {
+		lines = lines[len(lines)-60:]
+	}
+	return strings.Join(lines, "\n"), err
 }

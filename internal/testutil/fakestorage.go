@@ -5,6 +5,7 @@ package testutil
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -203,12 +204,34 @@ func (f *FakeStorage) SnapshotCount() int {
 }
 
 // ResticOrSkip returns a usable restic binary or skips the test.
+// $STORAGEBD_RESTIC, if set, must be usable: silently testing a different
+// restic than the one asked for would hide version-specific breakage.
 func ResticOrSkip(t testing.TB) string {
-	for _, p := range []string{os.Getenv(restic.EnvBinary), "/usr/bin/restic", "/usr/local/bin/restic"} {
-		if p != "" && restic.VerifyBinary(p) == nil {
+	if p := os.Getenv(restic.EnvBinary); p != "" {
+		if err := restic.VerifyBinary(p); err != nil {
+			t.Fatalf("%s is set but unusable: %v", restic.EnvBinary, err)
+		}
+		logVersion(t, p)
+		return p
+	}
+	for _, p := range []string{"/usr/bin/restic", "/usr/local/bin/restic"} {
+		if restic.VerifyBinary(p) == nil {
+			logVersion(t, p)
 			return p
 		}
 	}
 	t.Skip("no usable restic binary; set STORAGEBD_RESTIC")
 	return ""
+}
+
+var loggedVersion sync.Once
+
+func logVersion(t testing.TB, p string) {
+	loggedVersion.Do(func() {
+		v, err := restic.Version(context.Background(), p)
+		if err != nil {
+			t.Fatalf("restic at %s: %v", p, err)
+		}
+		fmt.Fprintf(os.Stderr, "testing with restic %s (%s)\n", v, p)
+	})
 }

@@ -1,0 +1,42 @@
+# storage.bd backup client: web UI (loopback only) + backup scheduler.
+# Installed by install.sh as /etc/systemd/system/storagebd.service.
+#
+# Runs as root on purpose: a server-wide backup must read every file and a
+# restore must be able to write anywhere. Hardening below is limited to
+# what doesn't get in the way of that. Notably there's no PrivateTmp (a
+# restore into /tmp would silently land in a private namespace) and no
+# RestrictSUIDSGID (restores must keep setuid/setgid bits).
+[Unit]
+Description=storage.bd backup client (web UI and scheduler)
+Documentation=https://storage.bd
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=STORAGEBD_HOME=/var/lib/storagebd
+ExecStart=/usr/local/bin/storagebd serve
+Restart=on-failure
+RestartSec=10
+# On SIGTERM storagebd interrupts restic and waits for it to drop its repo
+# lock; give that time before systemd escalates to SIGKILL.
+TimeoutStopSec=90
+UMask=0077
+StateDirectory=storagebd
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

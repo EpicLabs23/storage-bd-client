@@ -3,10 +3,12 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"storage-bd-client/internal/paths"
+	"storage-bd-client/internal/restic"
 	"storage-bd-client/internal/store"
 )
 
@@ -86,12 +88,24 @@ func NewRootCmd() *cobra.Command {
 		newRestoreDBCmd(a),
 		newJobsCmd(a),
 		newServeCmd(a),
+		newRetentionCmd(a),
+		newCleanupCmd(a),
 		newUIURLCmd(a),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the client version",
 			Run: func(cmd *cobra.Command, _ []string) {
-				fmt.Fprintf(cmd.OutOrStdout(), "storagebd %s (default API %s)\n", Version, DefaultAPIURL)
+				out := cmd.OutOrStdout()
+				fmt.Fprintf(out, "storagebd %s (default API %s)\n", Version, DefaultAPIURL)
+				// Bundled/env restic only; a restic-path setting (if any) is
+				// shown by `storagebd settings list`.
+				if bin, err := restic.Locate(""); err != nil {
+					fmt.Fprintln(out, "restic: not found (see: storagebd settings set restic-path)")
+				} else if v, err := restic.Version(cmd.Context(), bin); err != nil {
+					fmt.Fprintf(out, "restic: %s: %v\n", bin, err)
+				} else {
+					fmt.Fprintf(out, "restic %s (%s)\n", v, filepath.Clean(bin))
+				}
 			},
 		},
 	)

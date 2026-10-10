@@ -150,6 +150,23 @@ var migrations = []string{
 		last_run_at    TEXT,
 		updated_at     TEXT NOT NULL
 	);`,
+
+	// 6: retention (old-snapshot cleanup) per credential. `forget` runs
+	// after each successful backup; `prune` (which actually frees space but
+	// may read packs back, i.e. egress) at most every prune_interval_days.
+	`CREATE TABLE retention (
+		credential_id       INTEGER PRIMARY KEY REFERENCES credentials(id) ON DELETE CASCADE,
+		enabled             INTEGER NOT NULL DEFAULT 1,
+		keep_last           INTEGER NOT NULL DEFAULT 0,
+		keep_daily          INTEGER NOT NULL DEFAULT 0,
+		keep_weekly         INTEGER NOT NULL DEFAULT 0,
+		keep_monthly        INTEGER NOT NULL DEFAULT 0,
+		keep_yearly         INTEGER NOT NULL DEFAULT 0,
+		prune_interval_days INTEGER NOT NULL DEFAULT 7,
+		last_forget_at      TEXT,
+		last_prune_at       TEXT,
+		updated_at          TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

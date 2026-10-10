@@ -107,7 +107,7 @@ function statusBadge(status) {
   const [cls, label] = STATUS[status] || ["", status];
   return h("span", { class: "badge " + cls }, label);
 }
-const KIND_LABEL = { backup: "Backup", restore: "File restore", "restore-db": "Database restore" };
+const KIND_LABEL = { backup: "Backup", restore: "File restore", "restore-db": "Database restore", cleanup: "Cleanup" };
 
 // ---------- API ----------
 class ApiError extends Error {
@@ -244,7 +244,7 @@ const VIEWS = [
   ["overview", "home", "Overview"],
   ["sources", "folder", "What to back up"],
   ["restore", "restore", "Snapshots & restore"],
-  ["schedule", "clock", "Schedule"],
+  ["schedule", "clock", "Schedule & cleanup"],
   ["activity", "history", "Activity"],
   ["settings", "gear", "Settings"],
 ];
@@ -392,6 +392,11 @@ function overview(main) {
       h("strong", {}, "Recovery copy pending. "),
       "This repo's encryption password hasn't been saved with storage.bd yet. Until it is, this machine holds the only copy. It will be retried on the next backup.")));
   }
+  if (!c.retention && c.last_success) {
+    main.append(h("div", { class: "banner info" }, icon("info"), h("div", { class: "grow" },
+      h("strong", {}, "Old backups are kept forever. "), "They keep counting against your storage. Set how many to keep."),
+      h("button", { class: "btn sm", type: "button", onclick: () => go("schedule") }, "Set up cleanup")));
+  }
   if (c.last_job && c.last_job.status === "failed" && !live) {
     main.append(h("div", { class: "banner bad" }, icon("alert"), h("div", { class: "grow" },
       h("strong", {}, "Last " + (KIND_LABEL[c.last_job.kind] || c.last_job.kind).toLowerCase() + " failed: "), c.last_job.error || "see Activity for details")));
@@ -443,7 +448,7 @@ function progressCard(live) {
   const bar = h("div", { class: "progress" + (p ? "" : " indeterminate") }, h("span", {}));
   bar.firstChild.style.width = pct.toFixed(1) + "%";
   const meta = h("div", { class: "progress-meta" },
-    h("span", {}, live.source ? "Source: " + live.source : "Preparing…"),
+    h("span", {}, live.source ? (live.progress ? "Source: " + live.source : live.source) : "Preparing…"),
     p ? h("span", {}, pct.toFixed(1) + "% · " + bytes(p.bytes_done) + " of " + bytes(p.total_bytes) + " · " + p.files_done + "/" + p.total_files + " files" + (p.seconds_remaining ? " · " + duration(p.seconds_remaining) + " left" : "")) : null);
   const cur = p && p.current_files && p.current_files.length ? h("p", { class: "small soft mono mt-8 break" }, p.current_files[0]) : null;
   return h("div", { class: "card", id: "progress-card" }, bar, meta, cur);
@@ -731,7 +736,7 @@ function showSnapshot(c, snap, src, isDB, box) {
 // ---------- schedule ----------
 async function schedule(main) {
   const c = currentCred();
-  main.append(pageHead("Schedule", "Automatic backups of every enabled source."));
+  main.append(pageHead("Schedule & cleanup", "When to back up, and how many old backups to keep."));
   const sc = c.schedule || { enabled: false, mode: "daily", daily_time: "02:00", interval_hours: 24 };
   let mode = sc.mode;
   const enabled = h("input", { type: "checkbox" }); enabled.checked = sc.enabled;
@@ -768,6 +773,109 @@ async function schedule(main) {
     h("div", { class: "btn-row mt-20" }, save)),
   h("div", { class: "banner info mt-14" }, icon("info"), h("div", { class: "grow" },
     "Schedules run while ", h("code", {}, "storagebd serve"), " is running. Install it as a system service so backups continue after a reboot. A run missed while the machine was off happens once at the next start.")));
+  main.append(retentionCard(c));
+}
+
+// ---------- retention (old-snapshot cleanup) ----------
+function describeKeep(p) {
+  const parts = [];
+  if (p.keep_last) parts.push(p.keep_last + " most recent");
+  if (p.keep_daily) parts.push(p.keep_daily + " daily");
+  if (p.keep_weekly) parts.push(p.keep_weekly + " weekly");
+  if (p.keep_monthly) parts.push(p.keep_monthly + " monthly");
+  if (p.keep_yearly) parts.push(p.keep_yearly + " yearly");
+  return parts.join(", ");
+}
+
+function retentionCard(c) {
+  const card = h("div", { class: "card mt-14" }, h("div", { class: "card-head" }, h("h2", {}, "Keep old backups")), loading());
+  (async () => {
+    let data;
+    try { data = await api("GET", credPath(c.name) + "/retention"); }
+    catch (e) { clear(card).append(h("div", { class: "banner bad" }, icon("alert"), e.message)); return; }
+    const pol = data.policy, start = pol || data.suggested;
+    const num = (v, label, hint) => {
+      const i = input({ type: "number", min: "0", max: "10000", value: String(v || 0) });
+      return { i, el: field(label, i, hint) };
+    };
+    const f = {
+      last: num(start.keep_last, "Most recent"), daily: num(start.keep_daily, "Daily"), weekly: num(start.keep_weekly, "Weekly"),
+      monthly: num(start.keep_monthly, "Monthly"), yearly: num(start.keep_yearly, "Yearly"),
+      prune: num(start.prune_interval_days, "Free space every (days)", "Freeing space may read some old data back, so it runs at most this often."),
+    };
+    const body = () => ({ keep_last: +f.last.i.value || 0, keep_daily: +f.daily.i.value || 0, keep_weekly: +f.weekly.i.value || 0,
+      keep_monthly: +f.monthly.i.value || 0, keep_yearly: +f.yearly.i.value || 0, prune_interval_days: +f.prune.i.value || 7 });
+    const previewBox = h("div", {});
+
+    const status = pol
+      ? h("div", { class: "banner info" }, icon("check"), h("div", { class: "grow" },
+          h("strong", {}, "On: "), "keeping " + describeKeep(pol) + " of each source. ",
+          h("span", { class: "soft" }, "Last cleanup " + (pol.last_forget_at ? ago(pol.last_forget_at) : "not yet") + ", space last freed " + (pol.last_prune_at ? ago(pol.last_prune_at) : "not yet") + ".")))
+      : h("div", { class: "banner warn" }, icon("alert"), h("div", { class: "grow" },
+          h("strong", {}, "Off: "), "every backup is kept forever and counts against your storage. The suggested settings below keep a week of daily, a month of weekly and a year of monthly backups."));
+
+    const previewBtn = h("button", { class: "btn", type: "button" }, "Preview");
+    previewBtn.addEventListener("click", async () => {
+      previewBtn.disabled = true;
+      clear(previewBox).append(loading("Checking which backups the rules would remove…"));
+      try { clear(previewBox).append(previewView(await api("POST", credPath(c.name) + "/retention/preview", body()))); }
+      catch (e) { clear(previewBox).append(h("div", { class: "banner bad mt-14" }, icon("alert"), e.message)); }
+      finally { previewBtn.disabled = false; }
+    });
+    const saveBtn = h("button", { class: "btn primary", type: "button" }, pol ? "Save" : "Turn on cleanup");
+    saveBtn.addEventListener("click", async () => {
+      saveBtn.disabled = true;
+      try {
+        await api("PUT", credPath(c.name) + "/retention", body());
+        toast("Cleanup policy saved. It applies after each successful backup.", "ok");
+        await refresh(); go("schedule");
+      } catch (e) { fail(e); } finally { saveBtn.disabled = false; }
+    });
+    const actions = [previewBtn, saveBtn];
+    if (pol) {
+      const pruneNow = h("input", { type: "checkbox" });
+      actions.push(h("button", { class: "btn", type: "button", disabled: !!app.live[c.name], onclick: async () => {
+        try {
+          await api("POST", credPath(c.name) + "/cleanup", { prune: pruneNow.checked });
+          app.live[c.name] = { kind: "cleanup", started_at: new Date().toISOString() };
+          toast("Cleanup started.");
+        } catch (e) { fail(e); }
+      } }, "Clean up now"), h("label", { class: "check small" }, pruneNow, "also free space now"));
+      actions.push(h("button", { class: "btn danger ghost ml-auto", type: "button", onclick: async () => {
+        if (!(await confirmDialog("Turn off cleanup?", "Backups will be kept forever from now on. Nothing already removed comes back.", "Turn off", true))) return;
+        try { await api("DELETE", credPath(c.name) + "/retention"); toast("Cleanup turned off."); await refresh(); go("schedule"); } catch (e) { fail(e); }
+      } }, "Turn off"));
+    }
+    clear(card).append(
+      h("div", { class: "card-head" }, h("h2", {}, "Keep old backups")),
+      status,
+      h("p", { class: "soft small" }, "For each source, keep:"),
+      h("div", { class: "field-row mt-8" }, f.last.el, f.daily.el, f.weekly.el, f.monthly.el, f.yearly.el),
+      h("div", { class: "mt-14" }, f.prune.el),
+      h("p", { class: "small soft mt-14" }, "The newest backup of every source is always kept, and backups made by other tools are never touched."),
+      h("div", { class: "btn-row mt-14" }, actions),
+      previewBox);
+  })();
+  return card;
+}
+
+function previewView(d) {
+  const box = h("div", { class: "mt-14" });
+  if (!d.removed) {
+    box.append(h("div", { class: "banner info" }, icon("check"), "With these rules nothing would be removed right now."));
+    return box;
+  }
+  box.append(h("p", {}, h("strong", {}, d.removed + " backup(s) would be removed:")));
+  const list = h("div", { class: "list mt-8" });
+  for (const g of d.groups) {
+    list.append(h("div", { class: "row" }, h("div", { class: "grow" },
+      h("div", { class: "title" }, g.source || "(untagged)"),
+      h("div", { class: "sub" }, "keeps " + g.kept + ", removes " + g.removed.length),
+      g.removed.length ? h("details", { class: "mt-4" }, h("summary", { class: "small" }, "Show the backups that would be removed"),
+        h("ul", { class: "small mono" }, g.removed.map((sn) => h("li", {}, sn.short_id + "  " + when(sn.time))))) : null)));
+  }
+  box.append(list);
+  return box;
 }
 
 // ---------- activity ----------
@@ -808,6 +916,13 @@ async function activity(main) {
 function jobDetail(j) {
   const d = j.detail || {};
   const out = h("div", {});
+  if (j.kind === "cleanup") {
+    for (const w of d.warnings || []) out.append(h("div", { class: "banner warn" }, icon("alert"), w));
+    out.append(h("p", { class: "small" }, "Removed " + (d.removed || 0) + " old backup(s)" + (d.pruned ? " and freed unused space." : ". Space is freed on the next scheduled prune.")));
+    for (const g of d.groups || []) out.append(h("p", { class: "small soft" }, (g.source || "(untagged)") + ": kept " + g.kept + ", removed " + (g.removed || []).length));
+    if (d.prune_report) out.append(h("details", { class: "mt-4" }, h("summary", { class: "small" }, "restic prune report"), h("pre", { class: "small mono muted-box break" }, d.prune_report)));
+    return out;
+  }
   for (const w of d.warnings || []) out.append(h("div", { class: "banner warn" }, icon("alert"), w));
   if (d.sources && d.sources.length) {
     for (const s of d.sources) {
@@ -909,6 +1024,7 @@ function connectEvents() {
       case "job-start": live.job_id = e.job_id; live.kind = e.kind; break;
       case "source-start": live.source = e.source; live.progress = null; break;
       case "progress": live.progress = e.progress; live.source = e.source; break;
+      case "phase": live.source = e.message; live.progress = null; break;
       case "warning": toast(e.message); break;
       case "source-done":
         if (e.result && e.result.status === "failed") toast(e.source + ": " + e.result.error, "bad");
@@ -924,7 +1040,7 @@ function connectEvents() {
     if (e.credential !== app.cred) return;
     // Update just the progress card when it's on screen; re-render otherwise.
     const card = document.getElementById("progress-card");
-    if (card && (e.type === "progress" || e.type === "source-start")) card.replaceWith(progressCard(live));
+    if (card && (e.type === "progress" || e.type === "source-start" || e.type === "phase")) card.replaceWith(progressCard(live));
     else if (e.type === "job-start" && app.view === "overview") render();
   };
   es.onerror = () => { /* EventSource reconnects by itself */ };

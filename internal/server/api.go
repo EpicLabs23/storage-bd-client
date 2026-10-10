@@ -45,6 +45,12 @@ func (s *Server) apiRoutes() http.Handler {
 	mux.HandleFunc("PUT /api/credentials/{c}/schedule", s.withCred(s.putSchedule))
 	mux.HandleFunc("DELETE /api/credentials/{c}/schedule", s.withCred(s.deleteSchedule))
 
+	mux.HandleFunc("GET /api/credentials/{c}/retention", s.withCred(s.getRetention))
+	mux.HandleFunc("PUT /api/credentials/{c}/retention", s.withCred(s.putRetention))
+	mux.HandleFunc("DELETE /api/credentials/{c}/retention", s.withCred(s.deleteRetention))
+	mux.HandleFunc("POST /api/credentials/{c}/retention/preview", s.withCred(s.previewRetention))
+	mux.HandleFunc("POST /api/credentials/{c}/cleanup", s.withCred(s.cleanup))
+
 	mux.HandleFunc("POST /api/credentials/{c}/backup", s.withCred(s.backup))
 	mux.HandleFunc("POST /api/credentials/{c}/cancel", s.withCred(s.cancel))
 	mux.HandleFunc("GET /api/credentials/{c}/jobs", s.withCred(s.listJobs))
@@ -116,6 +122,7 @@ type credView struct {
 	RepoInitializedAt  *time.Time `json:"repo_initialized_at"`
 	PasswordEscrowedAt *time.Time `json:"password_escrowed_at"`
 	Schedule           *schedView `json:"schedule"`
+	Retention          *retView   `json:"retention"`
 	LastJob            *jobView   `json:"last_job"`
 	LastSuccess        *time.Time `json:"last_success"`
 	Running            *running   `json:"running"`
@@ -166,6 +173,9 @@ func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
 			AccountEmail: c.AccountEmail, RepoInitializedAt: c.RepoInitializedAt, PasswordEscrowedAt: c.PasswordEscrowedAt}
 		if sc, err := s.Store.GetSchedule(ctx, c.ID); err == nil {
 			v.Schedule = toSchedView(sc)
+		}
+		if rt, err := s.Store.GetRetention(ctx, c.ID); err == nil {
+			v.Retention = toRetView(rt)
 		}
 		if list, err := s.Store.ListJobs(ctx, c.ID, 50); err == nil {
 			if len(list) > 0 {
@@ -801,4 +811,116 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ---- retention ----
+
+type retView struct {
+	Enabled           bool       `json:"enabled"`
+	KeepLast          int        `json:"keep_last"`
+	KeepDaily         int        `json:"keep_daily"`
+	KeepWeekly        int        `json:"keep_weekly"`
+	KeepMonthly       int        `json:"keep_monthly"`
+	KeepYearly        int        `json:"keep_yearly"`
+	PruneIntervalDays int        `json:"prune_interval_days"`
+	LastForgetAt      *time.Time `json:"last_forget_at"`
+	LastPruneAt       *time.Time `json:"last_prune_at"`
+}
+
+func toRetView(r *store.Retention) *retView {
+	return &retView{r.Enabled, r.KeepLast, r.KeepDaily, r.KeepWeekly, r.KeepMonthly, r.KeepYearly,
+		r.PruneIntervalDays, r.LastForgetAt, r.LastPruneAt}
+}
+
+type retBody struct {
+	KeepLast          int `json:"keep_last"`
+	KeepDaily         int `json:"keep_daily"`
+	KeepWeekly        int `json:"keep_weekly"`
+	KeepMonthly       int `json:"keep_monthly"`
+	KeepYearly        int `json:"keep_yearly"`
+	PruneIntervalDays int `json:"prune_interval_days"`
+}
+
+func (b *retBody) policy(credID int64) *store.Retention {
+	days := b.PruneIntervalDays
+	if days == 0 {
+		days = 7
+	}
+	return &store.Retention{CredentialID: credID, Enabled: true, KeepLast: b.KeepLast, KeepDaily: b.KeepDaily,
+		KeepWeekly: b.KeepWeekly, KeepMonthly: b.KeepMonthly, KeepYearly: b.KeepYearly, PruneIntervalDays: days}
+}
+
+func (s *Server) getRetention(w http.ResponseWriter, r *http.Request, c *store.Credential) {
+	rt, err := s.Store.GetRetention(r.Context(), c.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusOK, map[string]any{"policy": nil, "suggested": toRetView(store.DefaultRetention(c.ID))})
+		return
+	} else if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"policy": toRetView(rt), "suggested": toRetView(store.DefaultRetention(c.ID))})
+}
+
+func (s *Server) putRetention(w http.ResponseWriter, r *http.Request, c *store.Credential) {
+	var b retBody
+	if err := decode(r, &b); err != nil {
+		fail(w, err)
+		return
+	}
+	pol := b.policy(c.ID)
+	if err := s.Store.SaveRetention(r.Context(), pol); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toRetView(pol))
+}
+
+func (s *Server) deleteRetention(w http.ResponseWriter, r *http.Request, c *store.Credential) {
+	if err := s.Store.DeleteRetention(r.Context(), c.ID); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// previewRetention runs forget --dry-run with the posted (unsaved) policy,
+// so the UI can show the effect before the user saves it.
+func (s *Server) previewRetention(w http.ResponseWriter, r *http.Request, c *store.Credential) {
+	var b retBody
+	if err := decode(r, &b); err != nil {
+		fail(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	d, err := s.Runner.PreviewCleanup(ctx, c, b.policy(c.ID))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) cleanup(w http.ResponseWriter, r *http.Request, c *store.Credential) {
+	var b struct {
+		Prune bool `json:"prune"`
+	}
+	if err := decode(r, &b); err != nil {
+		fail(w, err)
+		return
+	}
+	if rt, err := s.Store.GetRetention(r.Context(), c.ID); err != nil || !rt.Enabled {
+		fail(w, jobs.ErrNoRetention)
+		return
+	}
+	err := s.jobs.start(c, store.JobCleanup, store.TriggerManual, func(ctx context.Context, emit func(jobs.Event)) (*store.Job, error) {
+		job, _, err := s.Runner.Cleanup(ctx, c, jobs.CleanupOptions{Trigger: store.TriggerManual, ForcePrune: b.Prune, OnEvent: emit})
+		return job, err
+	})
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"started": true})
 }

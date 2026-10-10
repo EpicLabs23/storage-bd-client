@@ -12,6 +12,7 @@ const (
 	JobBackup       = "backup"
 	JobRestore      = "restore"
 	JobRestoreDB    = "restore-db"
+	JobCleanup      = "cleanup"
 	StatusRunning   = "running"
 	StatusOK        = "succeeded"
 	StatusPartial   = "partial" // finished, some files skipped (restic exit 3)

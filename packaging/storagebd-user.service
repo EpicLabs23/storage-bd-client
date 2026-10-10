@@ -1,0 +1,18 @@
+# storage.bd backup client for a single (non-root) user: backs up what that
+# user can read. Installed by `install.sh --user` as
+# ~/.config/systemd/user/storagebd.service. To keep it running while
+# logged out: loginctl enable-linger $USER
+[Unit]
+Description=storage.bd backup client (web UI and scheduler)
+Documentation=https://storage.bd
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/storagebd serve
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
+UMask=0077
+
+[Install]
+WantedBy=default.target

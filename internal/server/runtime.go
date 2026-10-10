@@ -141,6 +141,8 @@ func (m *jobManager) start(cred *store.Credential, kind, trigger string,
 			r.JobID = e.JobID
 		case "source-start":
 			r.Source, r.Progress = e.Source, nil
+		case "phase":
+			r.Source, r.Progress = e.Message, nil
 		case "progress":
 			r.Progress = e.Progress
 		}
@@ -194,7 +196,22 @@ func (m *jobManager) wait() { m.wg.Wait() }
 func (s *Server) startBackup(cred *store.Credential, trigger string, sources []string) error {
 	return s.jobs.start(cred, store.JobBackup, trigger, func(ctx context.Context, emit func(jobs.Event)) (*store.Job, error) {
 		job, _, err := s.Runner.Backup(ctx, cred, jobs.BackupOptions{Trigger: trigger, Sources: sources, OnEvent: emit})
-		return job, err
+		if err != nil {
+			return job, err
+		}
+		// Retention runs as its own job record but inside the same UI slot,
+		// so the repo stays "busy" until both are done.
+		emit(jobs.Event{Type: "phase", Message: "Removing old snapshots…"})
+		cj, d, cerr := s.Runner.AfterBackup(ctx, cred, job, jobs.CleanupOptions{Trigger: trigger})
+		switch {
+		case cerr != nil:
+			emit(jobs.Event{Type: "warning", Message: "removing old snapshots failed: " + cerr.Error()})
+		case cj != nil && cj.Status != store.StatusOK:
+			emit(jobs.Event{Type: "warning", Message: "removing old snapshots " + cj.Status + ": " + cj.Error})
+		case cj != nil && d.Removed > 0:
+			emit(jobs.Event{Type: "warning", Message: fmt.Sprintf("removed %d old snapshot(s) by the cleanup policy", d.Removed)})
+		}
+		return job, nil
 	})
 }
 

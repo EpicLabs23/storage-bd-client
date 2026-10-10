@@ -31,7 +31,11 @@ func bundledCandidates() []string {
 	var out []string
 	if exe, err := os.Executable(); err == nil {
 		if real, err := filepath.EvalSymlinks(exe); err == nil {
-			out = append(out, filepath.Join(filepath.Dir(real), "restic"))
+			dir := filepath.Dir(real)
+			// <prefix>/bin/storagebd → <prefix>/lib/storagebd/restic is
+			// where install.sh puts it (/usr/local or ~/.local); next to
+			// the binary covers an unpacked release tarball.
+			out = append(out, filepath.Join(dir, "..", "lib", "storagebd", "restic"), filepath.Join(dir, "restic"))
 		}
 	}
 	return append(out, "/usr/lib/storagebd/restic", "/usr/local/lib/storagebd/restic")

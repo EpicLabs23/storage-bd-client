@@ -163,6 +163,10 @@ type RunOptions struct {
 	OnStderrLine func([]byte)
 }
 
+// abortGrace is how long restic gets to exit after SIGINT when its input
+// failed, before it is killed.
+var abortGrace = 10 * time.Second
+
 // stderrLimit caps how much stderr is kept for error messages.
 const stderrLimit = 64 << 10
 
@@ -207,14 +211,25 @@ func (s *Session) Run(ctx context.Context, args []string, opts RunOptions) error
 	}
 
 	stdinDone := make(chan error, 1)
+	procDone := make(chan struct{}) // closed once cmd.Wait has returned
+	killed := false                 // written before stdinDone is sent, read after
 	if stdinPipe != nil {
 		go func() {
 			src := &readErrCapture{r: opts.Stdin}
 			io.Copy(stdinPipe, src) // a write error just means restic exited early
 			if src.err != nil {
-				// Producer failed: interrupt restic while its stdin is still
-				// open. Wait closes the pipe once restic has exited.
+				// Producer failed: stop restic while its stdin is still open,
+				// so it never sees EOF and can't commit a snapshot of the
+				// truncated stream. SIGINT first (restic drops its lock); but
+				// restic >= 0.17 keeps blocking on a stdin read after SIGINT,
+				// so SIGKILL after a grace period. Wait closes the pipe.
 				cmd.Process.Signal(os.Interrupt)
+				select {
+				case <-procDone:
+				case <-time.After(abortGrace):
+					cmd.Process.Kill()
+					killed = true
+				}
 				stdinDone <- src.err
 				return
 			}
@@ -234,7 +249,15 @@ func (s *Session) Run(ctx context.Context, args []string, opts RunOptions) error
 		io.Copy(io.Discard, stdout) // drain if a line was oversized
 	}
 	err := cmd.Wait()
+	close(procDone)
 	if stdinErr := <-stdinDone; stdinErr != nil {
+		if killed {
+			// A killed restic leaves its (non-exclusive) lock behind.
+			// `unlock` only removes locks that are stale, never live ones.
+			uctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			s.Run(uctx, []string{"unlock"}, RunOptions{Stdout: io.Discard})
+			cancel()
+		}
 		return fmt.Errorf("input for restic failed, backup aborted: %w", stdinErr)
 	}
 	if err == nil {

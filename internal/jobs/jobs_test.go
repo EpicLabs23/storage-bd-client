@@ -168,6 +168,13 @@ func TestFailedDumpNeverBecomesASnapshot(t *testing.T) {
 			if n := e.fake.SnapshotCount(); n != 0 {
 				t.Fatalf("%d snapshot(s) committed from a failed dump", n)
 			}
+			e.fake.Mu.Lock()
+			for k := range e.fake.Files {
+				if strings.HasPrefix(k, "locks/") {
+					t.Errorf("stale restic lock left behind: %s", k)
+				}
+			}
+			e.fake.Mu.Unlock()
 		})
 	}
 }

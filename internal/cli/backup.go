@@ -135,6 +135,7 @@ func short(id string) string {
 func newBackupCmd(a *app) *cobra.Command {
 	var sources []string
 	var trigger string
+	var noCleanup bool
 	cmd := &cobra.Command{
 		Use:   "backup [credential]",
 		Short: "Back up sources now",
@@ -159,6 +160,18 @@ Exit status: 0 success, 3 finished but some files could not be read,
 			if err != nil {
 				return err
 			}
+			if !noCleanup {
+				cj, d, err := r.AfterBackup(cmd.Context(), cred, job, jobs.CleanupOptions{Trigger: trigger})
+				switch {
+				case err != nil:
+					fmt.Fprintln(os.Stderr, "Warning: removing old snapshots failed:", err)
+				case cj != nil && cj.Status != store.StatusOK:
+					fmt.Fprintf(os.Stderr, "Warning: cleanup job #%d %s: %s\n", cj.ID, cj.Status, cj.Error)
+				case cj != nil && (d.Removed > 0 || d.Pruned):
+					fmt.Fprintf(os.Stderr, "Cleanup: removed %d old snapshot(s)%s.\n", d.Removed,
+						map[bool]string{true: " and freed unused space", false: ""}[d.Pruned])
+				}
+			}
 			switch job.Status {
 			case store.StatusOK:
 				fmt.Fprintf(cmd.OutOrStdout(), "Backup job #%d succeeded.\n", job.ID)
@@ -173,6 +186,7 @@ Exit status: 0 success, 3 finished but some files could not be read,
 		},
 	}
 	cmd.Flags().StringSliceVar(&sources, "source", nil, "only these sources (comma-separated or repeated)")
+	cmd.Flags().BoolVar(&noCleanup, "no-cleanup", false, "don't apply the retention policy after this backup")
 	cmd.Flags().StringVar(&trigger, "trigger", store.TriggerManual, "recorded in job history (manual|schedule)")
 	cmd.Flags().MarkHidden("trigger")
 	return cmd

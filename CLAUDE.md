@@ -8,7 +8,11 @@
 make build                                  # static bin/storagebd (CGO_ENABLED=0)
 make build API_URL=http://localhost:3010    # dev build pointed at local storage-bd-api
 make build-all                              # linux amd64 + arm64
+make restic                                 # pinned restic (packaging/restic.lock) → dist/restic/, checksum-verified
+make release VERSION=v0.1.0                 # dist/*.tar.gz + SHA256SUMS (reproducible)
+scripts/update-restic-pin.sh 0.19.1         # re-pin restic after verifying its GPG-signed SHA256SUMS
 make test && make vet                       # repo/jobs tests run the real restic (/usr/bin/restic or $STORAGEBD_RESTIC); skipped if absent
+STORAGEBD_RESTIC=$PWD/dist/restic/linux_amd64/restic make test   # against the pinned restic (prints "testing with restic X")
 scripts/it-dbs.sh                           # real MariaDB/MySQL/Postgres round trips in throwaway docker containers
 
 # UI against the fake storage.bd (login password: demo-password)
@@ -39,5 +43,6 @@ make build API_URL=<that URL> && ./bin/storagebd --home /tmp/sbui serve
 - Secrets never via argv or plain env vars: no-echo prompt or `--*-file PATH|-`; restic gets `RESTIC_PASSWORD_FILE`.
 - restic/dump tools are exec'd with argument slices and a constructed minimal env, never a shell string (§19).
 - Migrations in `internal/store/store.go` are append-only.
+- `packaging/restic.lock` is only ever written by `scripts/update-restic-pin.sh`; review its diff like code.
 - UI: no inline `style=`/scripts (CSP), dynamic text only via `h()`/textContent, icons are static path data.
 - Same workflow as storage-bd-api: one module per review checkpoint; the user commits (one-line message, no trailer); flag anything needing root.

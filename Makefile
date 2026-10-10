@@ -5,7 +5,7 @@ API_URL ?= https://api.storage.bd
 PKG     := storage-bd-client/internal/cli
 LDFLAGS := -s -w -X $(PKG).Version=$(VERSION) -X $(PKG).DefaultAPIURL=$(API_URL)
 
-.PHONY: build build-all test vet clean
+.PHONY: build build-all test vet clean release restic
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/storagebd ./cmd/storagebd
 
@@ -19,5 +19,13 @@ test:
 vet:
 	go vet ./...
 
+# Pinned restic (packaging/restic.lock) into dist/restic/, checksum-verified.
+restic:
+	scripts/fetch-restic.sh amd64 arm64
+
+# Release tarballs + SHA256SUMS in dist/: make release VERSION=v0.1.0
+release:
+	scripts/build-release.sh $(VERSION) $(API_URL)
+
 clean:
-	rm -rf bin
+	rm -rf bin dist/stage

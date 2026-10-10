@@ -201,6 +201,7 @@ button.stat:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field + .field, .field-row + .field, .field + .field-row { margin-top: 12px; }
+.field-row > .field { margin-top: 0; }
 .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
 .field label { font-size: 12.5px; font-weight: 580; }
 .field .hint { font-size: 12px; color: var(--ink-soft); }
