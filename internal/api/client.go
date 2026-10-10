@@ -17,7 +17,7 @@ import (
 )
 
 // Account refresh token cookie name, set by POST /auth/account-login and
-// rotated by /auth/account-refresh (storage-bd-api auth.controller.ts).
+// rotated by /auth/account-refresh.
 const accountRefreshCookie = "account_refresh_token"
 
 type Client struct {

@@ -1,0 +1,12 @@
+storagebd: the storage.bd backup client
+Copyright 2026 EpicLabs23
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Release packages also include restic (https://restic.net),
+Copyright (c) 2014, Alexander Neumann <alexander@bumpern.de>,
+under the BSD 2-Clause License (see LICENSE.restic), and Go modules listed
+in THIRD_PARTY_LICENSES.txt under their own licenses.
+
+"storage.bd" is a trademark of its owner. The Apache License does not
+grant permission to use it (section 6); forks must use another name.

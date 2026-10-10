@@ -24,7 +24,7 @@ type TokenSource interface {
 // Relay is a loopback-only HTTP reverse proxy between restic and the
 // storage.bd data-plane proxy, alive for one restic invocation.
 //
-// Why not hand restic the data token directly (as ecp-go does)? Data
+// Why not hand restic a data token in the repository URL? Data
 // tokens live 15 minutes and the proxy verifies expiry on every request,
 // so any backup or restore longer than that fails midway. The relay
 // attaches a fresh token per request instead. As a side effect neither the

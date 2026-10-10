@@ -111,7 +111,7 @@ install -d -m 0755 $OWN "$PREFIX/bin" "$LIBDIR" "$DOCDIR" "$UNIT_DIR"
 install -m 0755 $OWN "$HERE/storagebd" "$BIN.new" && mv -f "$BIN.new" "$BIN"
 # shellcheck disable=SC2086
 install -m 0755 $OWN "$HERE/restic" "$LIBDIR/restic.new" && mv -f "$LIBDIR/restic.new" "$LIBDIR/restic"
-for doc in LICENSE.restic README.txt; do
+for doc in LICENSE LICENSE.restic NOTICE THIRD_PARTY_LICENSES.txt README.txt; do
   # shellcheck disable=SC2086
   [ -f "$HERE/$doc" ] && install -m 0644 $OWN "$HERE/$doc" "$DOCDIR/$doc"
 done
@@ -141,7 +141,7 @@ else
   say ""
   if [ "$START" = 1 ]; then say "systemd isn't available here, so nothing was started."; fi
   say "Start the backup panel and scheduler with:"
-  if [ "$MODE" = system ]; then say "  sudo STORAGEBD_HOME=$DATA $BIN serve"; else say "  $BIN serve"; fi
+  if [ "$MODE" = system ]; then say "  sudo $BIN serve"; else say "  $BIN serve"; fi
 fi
 case ":$PATH:" in *":$PREFIX/bin:"*) ;; *) say "Note: $PREFIX/bin is not on your PATH." ;; esac
-say "Get started from the terminal instead: storagebd login && storagebd connect --storage-gb 10"
+say "Guide: https://github.com/EpicLabs23/storage-bd-client/blob/main/docs/USER_GUIDE.md"

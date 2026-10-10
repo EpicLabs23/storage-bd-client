@@ -27,6 +27,7 @@ LDFLAGS="-s -w -X $PKG.Version=$VERSION -X $PKG.DefaultAPIURL=$API_URL"
 
 rm -rf dist/stage
 mkdir -p dist/stage
+scripts/third-party-licenses.sh dist/THIRD_PARTY_LICENSES.txt
 for arch in amd64 arm64; do
   name="storagebd_${VERSION}_linux_${arch}"
   dir="dist/stage/$name"
@@ -35,9 +36,10 @@ for arch in amd64 arm64; do
   install -m 0755 "dist/restic/linux_${arch}/restic" "$dir/restic"
   install -m 0644 "dist/restic/linux_${arch}/LICENSE.restic" "$dir/LICENSE.restic"
   install -m 0755 packaging/install.sh "$dir/install.sh"
+  install -m 0644 LICENSE NOTICE dist/THIRD_PARTY_LICENSES.txt "$dir/"
   install -m 0644 packaging/storagebd.service packaging/storagebd-user.service packaging/README.txt "$dir/"
   printf 'storagebd %s linux_%s\nrestic %s\napi %s\n' "$VERSION" "$arch" "$RESTIC_VERSION" "$API_URL" > "$dir/RELEASE"
-  (cd "$dir" && sha256sum storagebd restic LICENSE.restic install.sh storagebd.service storagebd-user.service README.txt RELEASE > SHA256SUMS)
+  (cd "$dir" && sha256sum storagebd restic LICENSE LICENSE.restic NOTICE THIRD_PARTY_LICENSES.txt install.sh storagebd.service storagebd-user.service README.txt RELEASE > SHA256SUMS)
   find "$dir" -exec touch -h -d "@$EPOCH" {} +
   tar --sort=name --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' --mtime="@$EPOCH" -C dist/stage -czf "dist/$name.tar.gz" "$name"
   echo "built dist/$name.tar.gz"

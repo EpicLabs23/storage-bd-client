@@ -13,7 +13,7 @@ import (
 )
 
 // Init creates the repository. Returns ErrRepoExists if it already
-// exists (restic's own wording, as ecp-go also matches).
+// exists (restic's own wording).
 func (s *Session) Init(ctx context.Context) error {
 	err := s.Run(ctx, []string{"init"}, RunOptions{})
 	var re *Error

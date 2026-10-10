@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-**storage-bd-client** (`storagebd`) — storage.bd-branded backup client for D2C customers' Linux machines. Wraps the official restic binary; local state in SQLite. Design, decisions and module plan: [`docs/DESIGN.md`](docs/DESIGN.md). Platform architecture: `../storage-bd-api/docs/ARCHITECTURE.md` (§03/§04/§05/§19 apply directly).
+**storage-bd-client** (`storagebd`): the free, open-source (Apache-2.0) storage.bd backup client for Linux. It wraps the official restic binary and keeps local state in SQLite. Design and reasoning: [`docs/DESIGN.md`](docs/DESIGN.md). User docs: [`docs/INSTALL.md`](docs/INSTALL.md), [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md). This repo is **public**: no internal hostnames, private-repo paths, credentials, or descriptions of unfixed weaknesses in other storage.bd/EHM systems go in it (keep those in the private notes).
 
 ## Commands
 
 ```bash
 make build                                  # static bin/storagebd (CGO_ENABLED=0)
-make build API_URL=http://localhost:3010    # dev build pointed at local storage-bd-api
+make build API_URL=http://localhost:3010    # dev build pointed at a local storage.bd API
 make build-all                              # linux amd64 + arm64
 make restic                                 # pinned restic (packaging/restic.lock) → dist/restic/, checksum-verified
 make release VERSION=v0.1.0                 # dist/*.tar.gz + SHA256SUMS (reproducible)
@@ -19,7 +19,7 @@ scripts/it-dbs.sh                           # real MariaDB/MySQL/Postgres round 
 go run ./internal/testutil/cmd/fakestorage            # prints its URL
 make build API_URL=<that URL> && ./bin/storagebd --home /tmp/sbui serve
 ./bin/storagebd --home /tmp/sbtest credential list
-./bin/storagebd --home /tmp/sbtest login --api-url http://localhost:3010   # local storage-bd-api (npm run start:dev)
+./bin/storagebd --home /tmp/sbtest login --api-url http://localhost:3010   # a local storage.bd API
 ```
 
 ## Layout
@@ -45,4 +45,5 @@ make build API_URL=<that URL> && ./bin/storagebd --home /tmp/sbui serve
 - Migrations in `internal/store/store.go` are append-only.
 - `packaging/restic.lock` is only ever written by `scripts/update-restic-pin.sh`; review its diff like code.
 - UI: no inline `style=`/scripts (CSP), dynamic text only via `h()`/textContent, icons are static path data.
-- Same workflow as storage-bd-api: one module per review checkpoint; the user commits (one-line message, no trailer); flag anything needing root.
+- Workflow: one module per review checkpoint; the maintainer commits (one-line message, no trailer); flag anything needing root.
+- User-facing behaviour changes need matching updates in `docs/USER_GUIDE.md` / `docs/INSTALL.md`.

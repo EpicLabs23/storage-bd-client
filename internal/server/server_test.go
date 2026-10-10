@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -111,10 +112,9 @@ func TestAuthAndRequestHardening(t *testing.T) {
 		t.Fatalf("anon state: %d", code)
 	}
 	resp, _ := anon.Get(hs.base + "/")
-	b := make([]byte, 4096)
-	n, _ := resp.Body.Read(b)
+	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(b[:n]), "storagebd ui-url") {
+	if !strings.Contains(string(b), "storagebd ui-url") {
 		t.Fatal("anonymous index did not serve the locked page")
 	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || strings.Contains(csp, "unsafe-inline") {

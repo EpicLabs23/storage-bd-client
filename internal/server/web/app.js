@@ -988,7 +988,8 @@ async function settings(main) {
     toolsBox.querySelectorAll(".btn-row .grow").forEach((g) => { g.style.flex = "1"; });
   } catch (e) { clear(toolsBox).append(h("p", { class: "soft" }, e.message)); }
 
-  main.append(h("p", { class: "small soft mt-20" }, "storagebd " + app.state.version + (app.state.running_as_root ? " · running as root" : "")));
+  main.append(h("p", { class: "small soft mt-20" }, "storagebd " + app.state.version + (app.state.running_as_root ? " · running as root" : "") + " · free and open source (Apache-2.0) · ",
+    h("a", { href: "https://github.com/EpicLabs23/storage-bd-client", target: "_blank", rel: "noopener noreferrer" }, "source code and user guide")));
 }
 
 function connectDialog(sess) {
