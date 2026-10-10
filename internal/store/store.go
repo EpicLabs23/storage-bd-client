@@ -32,7 +32,7 @@ func Open(path string) (*Store, error) {
 	}
 
 	dsn := "file:" + path +
-		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate"
+		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -76,6 +76,20 @@ var migrations = []string{
 	);
 	CREATE UNIQUE INDEX credentials_one_default ON credentials(is_default) WHERE is_default = 1;
 	CREATE UNIQUE INDEX credentials_tenant ON credentials(api_url, tenant_id);`,
+
+	// 2: storage.bd account login, one per API URL. The refresh token is
+	// single-use (rotated on every refresh), so the CLI and `serve` must
+	// share it through here rather than each holding their own copy. The
+	// access token is cached too, so most calls skip the refresh entirely.
+	`CREATE TABLE account_sessions (
+		api_url            TEXT PRIMARY KEY,
+		email              TEXT NOT NULL,
+		refresh_token      TEXT NOT NULL,
+		refresh_expires_at TEXT NOT NULL,
+		access_token       TEXT NOT NULL DEFAULT '',
+		access_expires_at  TEXT,
+		updated_at         TEXT NOT NULL
+	);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

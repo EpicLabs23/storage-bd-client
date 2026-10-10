@@ -31,6 +31,7 @@ password; storage.bd keeps only a support-gated escrow copy.`,
 		newCredentialUpdateCmd(a),
 		newCredentialUseCmd(a),
 		newCredentialRemoveCmd(a),
+		newCredentialTestCmd(a),
 	)
 	return cmd
 }

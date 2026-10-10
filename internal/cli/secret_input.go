@@ -70,3 +70,16 @@ func confirm(question string) (bool, error) {
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes", nil
 }
+
+// promptLine reads one visible line from the TTY (non-secret input).
+func promptLine(prompt string) (string, error) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return "", fmt.Errorf("%s: stdin is not a terminal; pass it as a flag", strings.TrimSuffix(prompt, ": "))
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}

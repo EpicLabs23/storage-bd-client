@@ -70,6 +70,11 @@ func NewRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newCredentialCmd(a),
+		newLoginCmd(a),
+		newLogoutCmd(a),
+		newAccountCmd(a),
+		newConnectCmd(a),
+		newActivateCmd(a),
 		&cobra.Command{
 			Use:   "version",
 			Short: "Print the client version",

@@ -1,5 +1,5 @@
 # Static, pure-Go builds (modernc SQLite needs no cgo). Override the
-# pre-configured API for dev builds: make build API_URL=http://localhost:3000
+# pre-configured API for dev builds: make build API_URL=http://localhost:3010
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 API_URL ?= https://api.storage.bd
 PKG     := storage-bd-client/internal/cli

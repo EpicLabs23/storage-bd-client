@@ -6,10 +6,11 @@
 
 ```bash
 make build                                  # static bin/storagebd (CGO_ENABLED=0)
-make build API_URL=http://localhost:3000    # dev build pointed at local storage-bd-api
+make build API_URL=http://localhost:3010    # dev build pointed at local storage-bd-api
 make build-all                              # linux amd64 + arm64
 make test && make vet
 ./bin/storagebd --home /tmp/sbtest credential list
+./bin/storagebd --home /tmp/sbtest login --api-url http://localhost:3010   # local storage-bd-api (npm run start:dev)
 ```
 
 ## Layout
@@ -18,6 +19,8 @@ make test && make vet
 - `internal/cli` — cobra commands; build-time `DefaultAPIURL` / `Version`
 - `internal/store` — SQLite (modernc, pure Go), append-only migrations, validation
 - `internal/paths` — data dir resolution + 0700 enforcement
+- `internal/api` — storage-bd-api HTTP client (account auth, D2C tenants, balance, pricing, data token)
+- `internal/account` — login/session refresh (serialized via SQLite), connect/activate; shared by CLI and the future web UI
 
 ## Rules
 
