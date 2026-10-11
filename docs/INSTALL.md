@@ -11,6 +11,8 @@ To back up databases, the database's own client tools must be on the machine. Da
 
 Everything else, including restic, comes in the package.
 
+> **Which machine?** Every command in this guide runs **on the server** you're backing up, in an SSH session or at its console. The one exception is the SSH tunnel in [Open the backup page](#open-the-backup-page), which runs **on your own computer**.
+
 - [Quick install (recommended)](#quick-install-recommended)
 - [Install for one user only](#install-for-one-user-only)
 - [Install a specific version](#install-a-specific-version)
@@ -98,20 +100,77 @@ For just the `storagebd` binary: `make build` gives `bin/storagebd`. You then ne
 
 ## Open the backup page
 
-The service prints a private login link, which changes every time it starts. Get the current one with:
+The backup page runs on the server and listens only on `127.0.0.1:7878`, so nothing on the network can reach it. To use it from your own computer, you forward that port over SSH. This keeps the page private: only someone who can already log in to the server over SSH can reach it.
+
+### At the server itself
+
+If the server has a screen and a browser (a desktop or a laptop), run this on it:
 
 ```sh
 sudo storagebd ui-url        # server-wide install
 storagebd ui-url             # --user install
 ```
 
-The page only listens on `127.0.0.1:7878`, so nothing on the network can reach it. On a remote server, forward the port over SSH and open the link on your own computer:
+Open the printed link (`http://127.0.0.1:7878/auth?t=…`) in the browser there. That's all.
+
+### From your computer, for a remote server
+
+**1. On the server**, get the private link:
 
 ```sh
-ssh -L 7878:127.0.0.1:7878 you@your-server
+sudo storagebd ui-url        # server-wide install
+storagebd ui-url             # --user install
 ```
 
-No systemd (for example in a container)? Start it yourself with `sudo storagebd serve`. It prints the link when it starts.
+Copy the link it prints. It changes every time the service restarts, so get it again if it stops working.
+
+**2. On your own computer**, open a terminal (Terminal on macOS or Linux, PowerShell on Windows 10/11, which has SSH built in) and start the tunnel with your SSH key:
+
+```sh
+ssh -i ~/.ssh/id_ed25519 -N -L 7878:127.0.0.1:7878 you@your-server
+```
+
+| Part | Meaning |
+|---|---|
+| `-i ~/.ssh/id_ed25519` | Your SSH private key, the same one you use to log in to the server. Often `~/.ssh/id_rsa` or `~/.ssh/id_ecdsa` instead. Leave `-i …` out if your key is loaded in `ssh-agent` or is the default key. |
+| `-N` | Only forward the port; don't open a shell. |
+| `-L 7878:127.0.0.1:7878` | Port 7878 on your computer goes to port 7878 on the server's own loopback, where the page listens. |
+| `you@your-server` | Your SSH login and the server's hostname or IP, for example `root@203.0.113.10`. |
+
+The command prints nothing and doesn't return. That means the tunnel is open. Leave this window open while you use the page.
+
+**3. On your own computer**, open the link from step 1 in your browser. Press **Ctrl-C** in the tunnel window when you're done.
+
+#### Variations
+
+- **SSH on another port** (say 2222): add `-p 2222`.
+  ```sh
+  ssh -i ~/.ssh/id_ed25519 -p 2222 -N -L 7878:127.0.0.1:7878 you@your-server
+  ```
+- **Port 7878 already used on your computer** ("bind: Address already in use"): pick another local port, then change the port in the link to match.
+  ```sh
+  ssh -i ~/.ssh/id_ed25519 -N -L 8787:127.0.0.1:7878 you@your-server
+  # then open http://127.0.0.1:8787/auth?t=… (same t=, port 8787)
+  ```
+- **A shortcut for next time:** add this to `~/.ssh/config` on your computer,
+  ```
+  Host backup-myserver
+      HostName 203.0.113.10
+      User you
+      IdentityFile ~/.ssh/id_ed25519
+      LocalForward 7878 127.0.0.1:7878
+  ```
+  then `ssh -N backup-myserver` opens the tunnel.
+
+#### If it doesn't work
+
+- **"Permission denied (publickey)"**: SSH didn't accept the key. Check that `-i` points at the right private key and that you can log in normally with `ssh -i ~/.ssh/id_ed25519 you@your-server`.
+- **The browser says it can't connect**: the tunnel window was closed, or the service isn't running. Check with `systemctl status storagebd` on the server.
+- **"invalid or expired link"**: the service restarted. Run `sudo storagebd ui-url` on the server again and use the new link.
+
+### Without systemd
+
+For example in a container: start it yourself on the server with `sudo storagebd serve`. It prints the link when it starts, and stays in the foreground.
 
 ## Upgrade
 

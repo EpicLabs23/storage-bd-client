@@ -23,9 +23,10 @@ printed at startup and changes on every start. Get it again any time with:
 
   storagebd ui-url
 
-On a remote server, open an SSH tunnel and use the link locally:
+On a remote server, run this on your own computer (not the server) to open
+an SSH tunnel, then open the link in your computer's browser:
 
-  ssh -L 7878:127.0.0.1:7878 your-server
+  ssh -i ~/.ssh/id_ed25519 -N -L 7878:127.0.0.1:7878 you@your-server
 
 Scheduled backups run only while this is running; install it as a systemd
 service to keep them going.`,

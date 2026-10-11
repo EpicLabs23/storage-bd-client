@@ -13,23 +13,33 @@ storagebd is free and open source (Apache-2.0). It builds on [restic](https://re
 
 ## Install
 
-On the machine you want to back up (Linux x86_64 or arm64):
+**1. On the server** (the Linux x86_64 or arm64 machine you want to back up), install storagebd:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo sh
 ```
 
-The command downloads the latest release, checks it against the release's published checksums, installs it, and starts the backup service. Then open the backup page:
+The command downloads the latest release, checks it against the release's published checksums, installs it, and starts the backup service.
+
+**2. On the server**, get the private link to the backup page:
 
 ```sh
 sudo storagebd ui-url
 ```
 
-It prints a private link. Open it in a browser on that machine. On a remote server, open a tunnel first and use the link on your computer:
+It prints a link like `http://127.0.0.1:7878/auth?t=…`. If you're sitting at the server itself, open that link in its browser and you're done.
+
+**3. On your own computer** (only if the server is remote): the backup page is never exposed to the network, so you reach it through SSH. Open a terminal on your computer (Terminal on macOS/Linux, PowerShell on Windows) and run:
 
 ```sh
-ssh -L 7878:127.0.0.1:7878 you@your-server
+ssh -i ~/.ssh/id_ed25519 -N -L 7878:127.0.0.1:7878 you@your-server
 ```
+
+Replace `~/.ssh/id_ed25519` with your SSH private key and `you@your-server` with the login you normally use for the server. The command prints nothing and keeps running. That's normal: leave the window open while you use the page.
+
+**4. On your own computer**, open the link from step 2 in your browser. Press Ctrl-C in the SSH window when you're done.
+
+More tunnel options (another SSH port, a busy local port, an `~/.ssh/config` shortcut) are in **[docs/INSTALL.md](docs/INSTALL.md#open-the-backup-page)**.
 
 Other ways to install (just for your user, a specific version, manually, or from source) are in **[docs/INSTALL.md](docs/INSTALL.md)**.
 
@@ -37,7 +47,7 @@ Other ways to install (just for your user, a specific version, manually, or from
 
 In the web page: **sign in** to your storage.bd account → **create a backup space** for this machine → **add a folder or database** → **Back up now**. Then set a schedule and a cleanup policy on the *Schedule & cleanup* page.
 
-Or from the terminal:
+Or from a terminal on the server (no tunnel needed):
 
 ```sh
 sudo storagebd login                                    # your storage.bd account
