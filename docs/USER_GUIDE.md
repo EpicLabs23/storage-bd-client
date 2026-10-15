@@ -57,6 +57,19 @@ sudo storagebd account                      # balance and backup spaces
 
 No storage.bd account yet? Sign up at [storage.bd](https://storage.bd) and confirm your email first.
 
+### Already added storage in the storage.bd dashboard?
+
+**Add storage** in the dashboard shows a **Tenant ID**, an **Install ID** and an **Install secret** (the secret only once). To use that space on this machine:
+
+- **Web page:** click **Use it on this machine** under the sign-in form (or *Settings* → **Use a space from the dashboard**) and paste the three values. You don't need to sign in. storagebd checks them with storage.bd before saving.
+- **Terminal:**
+  ```sh
+  sudo storagebd credential add NAME --tenant-id <Tenant ID> --install-id <Install ID>
+  # prompts for the install secret
+  ```
+
+A space made in the dashboard may start suspended; activate it there before the first backup. For a new, empty space storagebd generates the encryption password. If the space already has backups from another machine, tick **This space already has backups from another machine** (terminal: `--existing-repo`) and enter that machine's encryption password.
+
 ## 2. Choose what to back up
 
 **Web page:** *What to back up* → **Add folder** or **Add database**.
@@ -250,7 +263,7 @@ Each backup space is encrypted with a long random password, generated on this ma
 
 Restoring onto a different machine needs that backup space's credential.
 
-- **The old machine still works:** on it, run `sudo storagebd credential show NAME --reveal`. On the new machine:
+- **The old machine still works:** on it, run `sudo storagebd credential show NAME --reveal`. On the new machine, enter those values in the web page (*Settings* → **Use a space from the dashboard**, ticking **already has backups**), or:
   ```sh
   sudo storagebd credential add NAME --tenant-id <tenant ID> --install-id <install ID> --existing-repo
   # prompts for the install secret, then the repo's encryption password
@@ -271,7 +284,7 @@ sudo storagebd source add-dir www /var/www --cred files-space
 sudo storagebd backup db-space
 ```
 
-In the web page, a selector at the top of the side bar switches between them. *Settings* → **Create another backup space** adds one.
+In the web page, a selector at the top of the side bar switches between them. *Settings* → **Create another backup space** adds one; **Use a space from the dashboard** adds one you created there.
 
 ## Managing credentials from the terminal
 

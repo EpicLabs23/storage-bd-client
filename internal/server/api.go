@@ -30,6 +30,7 @@ func (s *Server) apiRoutes() http.Handler {
 	mux.HandleFunc("GET /api/account", s.getAccount)
 	mux.HandleFunc("GET /api/quote", s.getQuote)
 	mux.HandleFunc("POST /api/connect", s.connect)
+	mux.HandleFunc("POST /api/credentials", s.addCred)
 
 	mux.HandleFunc("POST /api/credentials/{c}/default", s.withCred(s.setDefault))
 	mux.HandleFunc("POST /api/credentials/{c}/activate", s.withCred(s.activate))
@@ -348,6 +349,63 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---- credentials ----
+
+// addCred stores a credential the user created in the storage.bd
+// dashboard (the web counterpart of `credential add`). It's checked with
+// storage.bd before saving, so a mistyped ID or secret fails here rather
+// than on the first backup. No account sign-in is needed.
+func (s *Server) addCred(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		APIURL         string `json:"api_url"`
+		Name           string `json:"name"`
+		TenantID       string `json:"tenant_id"`
+		InstallID      string `json:"install_id"`
+		InstallSecret  string `json:"install_secret"`
+		ResticPassword string `json:"restic_password"` // empty: new repo, generate one
+	}
+	if err := decode(r, &body); err != nil {
+		fail(w, err)
+		return
+	}
+	apiURL, err := s.apiURL(strings.TrimSpace(body.APIURL))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	name, tenantID, installID := strings.TrimSpace(body.Name), strings.TrimSpace(body.TenantID), strings.TrimSpace(body.InstallID)
+	secret := strings.TrimSpace(body.InstallSecret)
+	for _, err := range []error{store.ValidateName(name), store.ValidateUUID("Tenant ID", tenantID),
+		store.ValidateUUID("Install ID", installID), store.ValidateInstallSecret(secret)} {
+		if err != nil {
+			fail(w, err)
+			return
+		}
+	}
+	password := body.ResticPassword
+	if password == "" {
+		if password, err = store.GenerateResticPassword(); err != nil {
+			fail(w, err)
+			return
+		}
+	} else if err := store.ValidateResticPassword(password); err != nil {
+		fail(w, err)
+		return
+	}
+	c := &store.Credential{Name: name, APIURL: apiURL, TenantID: tenantID, InstallID: installID,
+		InstallSecret: secret, ResticPassword: password}
+	if sess, err := s.Store.GetSession(r.Context(), apiURL); err == nil {
+		c.AccountEmail = sess.Email
+	}
+	if err := s.Accounts.TestCredential(r.Context(), c); err != nil {
+		fail(w, err)
+		return
+	}
+	if err := s.Store.CreateCredential(r.Context(), c); err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"name": c.Name})
+}
 
 func (s *Server) setDefault(w http.ResponseWriter, r *http.Request, c *store.Credential) {
 	if err := s.Store.SetDefaultCredential(r.Context(), c.Name); err != nil {

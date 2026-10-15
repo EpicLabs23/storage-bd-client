@@ -288,8 +288,15 @@ function pageHead(title, sub, actions) {
 function onboarding() {
   const wrap = h("div", { class: "onboard" });
   const sess = app.state.sessions.find((s) => s.api_url === app.state.default_api_url) || app.state.sessions[0];
+  if (app.onboardExisting) {
+    wrap.append(addExistingCard(sess),
+      h("p", { class: "small soft mt-14" }, h("button", { class: "linkish", type: "button", onclick: () => { app.onboardExisting = false; render(); } }, "Back")));
+    return wrap;
+  }
   if (!sess) wrap.append(loginCard(1));
   else wrap.append(connectCard(sess, 2));
+  wrap.append(h("p", { class: "small soft mt-14" }, "Already added storage in your storage.bd dashboard? ",
+    h("button", { class: "linkish", type: "button", onclick: () => { app.onboardExisting = true; render(); } }, "Use it on this machine")));
   return wrap;
 }
 
@@ -378,6 +385,58 @@ function connectCard(sess, step) {
   return h("div", { class: "card" }, step ? stepBar(step) : null,
     h("h1", {}, "Create a backup space for this machine"),
     h("p", { class: "soft mt-4" }, "Signed in as " + sess.email + ". This machine gets its own encrypted repository on storage.bd."),
+    h("div", { class: "mt-20" }, form));
+}
+
+// A space created with "Add storage" in the storage.bd dashboard, which
+// shows its tenant ID, install ID and install secret once. Same as
+// `storagebd credential add`; no sign-in needed.
+function addExistingCard(sess) {
+  const taken = app.state.credentials.some((c) => c.name === app.state.default_name);
+  const name = input({ value: taken ? "" : app.state.default_name, required: true, pattern: "[a-z0-9][a-z0-9._\\-]{0,62}" });
+  const tenant = input({ required: true, placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", class: "mono" });
+  const install = input({ required: true, placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", class: "mono" });
+  const secret = input({ type: "password", autocomplete: "off", required: true, class: "mono" });
+  const used = h("input", { type: "checkbox" });
+  const pass = input({ type: "password", autocomplete: "off", class: "mono" });
+  const passField = field("Its encryption password", pass, "On the machine that used it: storagebd credential show NAME --reveal (the restic password).");
+  passField.hidden = true;
+  used.addEventListener("change", () => { passField.hidden = !used.checked; pass.required = used.checked; });
+  const apiUrl = input({ placeholder: sess ? sess.api_url : app.state.default_api_url });
+
+  const btn = h("button", { class: "btn primary lg", type: "submit" }, "Add backup space");
+  const form = h("form", {},
+    field("Name on this machine", name, "Used in commands, for example: storagebd backup " + (name.value || "NAME")),
+    field("Tenant ID", tenant),
+    field("Install ID", install),
+    field("Install secret", secret, "Shown once in the dashboard. If you've lost it, regenerate it there."),
+    h("label", { class: "check mt-14" }, used, "This space already has backups from another machine"),
+    passField,
+    h("details", { class: "mt-14" }, h("summary", { class: "soft small" }, "Advanced"),
+      h("div", { class: "mt-8" }, field("storage.bd API", apiUrl, "Leave empty for " + (sess ? sess.api_url : app.state.default_api_url)))),
+    h("div", { class: "btn-row mt-20" }, btn));
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    try {
+      const res = await api("POST", "/api/credentials", {
+        api_url: apiUrl.value.trim() || (sess ? sess.api_url : ""), name: name.value.trim(),
+        tenant_id: tenant.value.trim(), install_id: install.value.trim(), install_secret: secret.value.trim(),
+        restic_password: used.checked ? pass.value : "",
+      });
+      secret.value = ""; pass.value = "";
+      toast("Backup space added.", "ok");
+      closeDialogs();
+      app.onboardExisting = false;
+      app.cred = res.name;
+      app.view = "sources";
+      await refresh();
+      render();
+    } catch (err) { fail(err); } finally { btn.disabled = false; }
+  });
+  return h("div", { class: "card" },
+    h("h1", {}, "Use a backup space from your dashboard"),
+    h("p", { class: "soft mt-4" }, "Paste the details shown after \u201cAdd storage\u201d in your storage.bd dashboard. They're checked with storage.bd before anything is saved."),
     h("div", { class: "mt-20" }, form));
 }
 
@@ -954,7 +1013,9 @@ async function settings(main) {
           try { await api("POST", "/api/account/logout", { api_url: sess.api_url }); toast("Signed out. Backups keep working."); await refresh(); go("settings"); } catch (e) { fail(e); }
         } }, "Sign out"))
       : loginCard(0),
-    sess ? h("div", { class: "mt-14" }, h("button", { class: "btn", type: "button", onclick: () => connectDialog(sess) }, icon("plus"), "Create another backup space")) : null));
+    h("div", { class: "btn-row mt-14" },
+      sess ? h("button", { class: "btn", type: "button", onclick: () => connectDialog(sess) }, icon("plus"), "Create another backup space") : null,
+      h("button", { class: "btn", type: "button", onclick: () => dialog({ title: "Add a space from the dashboard", body: addExistingCard(sess), actions: [] }) }, "Use a space from the dashboard"))));
 
   // repos on this machine
   const repos = h("div", { class: "list" });

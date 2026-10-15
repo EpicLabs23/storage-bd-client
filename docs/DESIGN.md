@@ -115,7 +115,7 @@ An earlier claim that the suite passed on 0.19.1 (module 6) was wrong. `dist/res
 
 ## Open items
 
-- Re-linking a machine to an *existing* tenant requires a D2C "regenerate install secret" endpoint plus the repo's restic password (escrow recovery is support-gated, §05). Out of scope for v1 by decision.
+- The web UI can add a credential pasted from the dashboard (`POST /api/credentials`, same as `credential add`; it mints a data token first so a wrong value is refused before saving). It can't *pick* an existing tenant from the account's list: re-linking a machine to an *existing* tenant without its install secret requires a D2C "regenerate install secret" endpoint plus the repo's restic password (escrow recovery is support-gated, §05). Out of scope for v1 by decision.
 - Mongo/MSSQL dumps: not in v1 (only MySQL/MariaDB + Postgres).
 - MySQL 8 round trip is unverified with Oracle's `mysqldump` (the test machine only had MariaDB's client tools).
 - Manual check pending: `sudo ./install.sh` on a real systemd host (unit starts, `sudo storagebd ui-url` works, `systemctl stop` lets restic release its lock).

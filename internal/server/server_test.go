@@ -398,3 +398,39 @@ func TestRetentionAPIAndAfterBackupCleanup(t *testing.T) {
 		t.Fatalf("retention times: %+v", rt)
 	}
 }
+
+// A space created in the storage.bd dashboard is added without signing in,
+// and a wrong secret is refused before anything is saved.
+func TestAddDashboardCredential(t *testing.T) {
+	hs := start(t)
+	c := hs.client(t)
+	add := func(secret, pw string) (int, map[string]any) {
+		b, _ := json.Marshal(map[string]string{"name": "dash", "tenant_id": testutil.TenantID,
+			"install_id": testutil.InstallID, "install_secret": secret, "restic_password": pw})
+		return call(t, c, "POST", hs.base+"/api/credentials", string(b), csrf)
+	}
+
+	if code, out := add(strings.Repeat("cd", 32), ""); code != 400 || !strings.Contains(fmt.Sprint(out["error"]), "rejected") {
+		t.Fatalf("wrong secret: %d %v", code, out)
+	}
+	if code, out := add(testutil.InstallSecret, "short"); code != 400 {
+		t.Fatalf("short password: %d %v", code, out)
+	}
+	if creds, _ := hs.srv.Store.ListCredentials(context.Background()); len(creds) != 0 {
+		t.Fatalf("saved despite errors: %d", len(creds))
+	}
+
+	if code, out := add(" "+testutil.InstallSecret+"\n", ""); code != 201 || out["name"] != "dash" {
+		t.Fatalf("add: %d %v", code, out)
+	}
+	cred, err := hs.srv.Store.GetCredentialByName(context.Background(), "dash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cred.IsDefault || cred.InstallSecret != testutil.InstallSecret || len(cred.ResticPassword) < 16 {
+		t.Fatalf("stored credential: default=%v secret ok=%v pw len=%d", cred.IsDefault, cred.InstallSecret == testutil.InstallSecret, len(cred.ResticPassword))
+	}
+	if code, _ := add(testutil.InstallSecret, ""); code != 400 {
+		t.Fatalf("duplicate accepted: %d", code)
+	}
+}
