@@ -83,7 +83,7 @@ func newRepoCmd(a *app) *cobra.Command {
 					return errors.New("restic is not usable")
 				}
 				fmt.Fprintf(tw, "restic:\t%s (%s)\n", version, bin)
-				fmt.Fprintf(tw, "Credential:\t%s (tenant %s)\n", cred.Name, cred.TenantID)
+				fmt.Fprintf(tw, "Credential:\t%s (space ID %s)\n", cred.Name, cred.TenantID)
 
 				o, err := m.Open(cmd.Context(), cred)
 				if err != nil {

@@ -374,8 +374,9 @@ func (s *Server) addCred(w http.ResponseWriter, r *http.Request) {
 	}
 	name, tenantID, installID := strings.TrimSpace(body.Name), strings.TrimSpace(body.TenantID), strings.TrimSpace(body.InstallID)
 	secret := strings.TrimSpace(body.InstallSecret)
-	for _, err := range []error{store.ValidateName(name), store.ValidateUUID("Tenant ID", tenantID),
-		store.ValidateUUID("Install ID", installID), store.ValidateInstallSecret(secret)} {
+	for _, err := range []error{store.ValidateName(name), store.ValidateUUID("Space ID", tenantID),
+		store.ValidateUUID("Access key ID", installID),
+		store.ValidateInstallSecret(secret)} {
 		if err != nil {
 			fail(w, err)
 			return

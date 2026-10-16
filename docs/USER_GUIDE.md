@@ -57,15 +57,15 @@ sudo storagebd account                      # balance and backup spaces
 
 No storage.bd account yet? Sign up at [storage.bd](https://storage.bd) and confirm your email first.
 
-### Already added storage in the storage.bd dashboard?
+### Already created a backup space in the storage.bd dashboard?
 
-**Add storage** in the dashboard shows a **Tenant ID**, an **Install ID** and an **Install secret** (the secret only once). To use that space on this machine:
+**New backup space** in the dashboard shows a **Space ID**, an **Access key ID** and a **Secret key** (the secret key only once). To use that space on this machine:
 
 - **Web page:** click **Use it on this machine** under the sign-in form (or *Settings* → **Use a space from the dashboard**) and paste the three values. You don't need to sign in. storagebd checks them with storage.bd before saving.
 - **Terminal:**
   ```sh
-  sudo storagebd credential add NAME --tenant-id <Tenant ID> --install-id <Install ID>
-  # prompts for the install secret
+  sudo storagebd credential add NAME --space-id <Space ID> --key-id <Access key ID>
+  # prompts for the secret key
   ```
 
 A space made in the dashboard may start suspended; activate it there before the first backup. For a new, empty space storagebd generates the encryption password. If the space already has backups from another machine, tick **This space already has backups from another machine** (terminal: `--existing-repo`) and enter that machine's encryption password.
@@ -265,8 +265,8 @@ Restoring onto a different machine needs that backup space's credential.
 
 - **The old machine still works:** on it, run `sudo storagebd credential show NAME --reveal`. On the new machine, enter those values in the web page (*Settings* → **Use a space from the dashboard**, ticking **already has backups**), or:
   ```sh
-  sudo storagebd credential add NAME --tenant-id <tenant ID> --install-id <install ID> --existing-repo
-  # prompts for the install secret, then the repo's encryption password
+  sudo storagebd credential add NAME --space-id <Space ID> --key-id <Access key ID> --existing-repo
+  # prompts for the secret key, then the space's encryption password
   ```
   Then add the same sources (or new ones) and restore as usual.
 - **The old machine is gone:** contact storage.bd support. They can recover the backup space's credentials and the escrowed encryption password, after verifying it's you.
@@ -293,15 +293,17 @@ Credentials are what link this machine to a backup space. They're stored only on
 ```sh
 sudo storagebd credential list                       # never shows secrets
 sudo storagebd credential show [NAME] [--reveal] [--json]
-sudo storagebd credential add NAME --tenant-id ID --install-id ID [--existing-repo]
-sudo storagebd credential update NAME --install-secret        # after it was regenerated
+sudo storagebd credential add NAME --space-id ID --key-id ID [--existing-repo]
+sudo storagebd credential update NAME --secret        # after a new secret key was issued
 sudo storagebd credential update NAME --rename NEWNAME
 sudo storagebd credential use NAME                   # make it the default
 sudo storagebd credential test [NAME]                # check storage.bd accepts it
 sudo storagebd credential remove NAME                # asks first; backups on storage.bd stay
 ```
 
-Secrets are never accepted as command-line arguments, because other users could see them in the process list. They're typed at a hidden prompt, or read with `--install-secret-file FILE` / `--restic-password-file FILE` (`-` reads stdin).
+Secrets are never accepted as command-line arguments, because other users could see them in the process list. They're typed at a hidden prompt, or read with `--secret-file FILE` / `--restic-password-file FILE` (`-` reads stdin).
+
+The flags were renamed in v0.1.2 to match the storage.bd dashboard. The old spellings (`--tenant-id`, `--install-id`, `--install-secret`, `--install-secret-file`) still work but are no longer listed in `--help`. `--json` output keeps its field names (`tenant_id`, `install_id`) so existing scripts don't break.
 
 `credential update NAME --restic-password` only corrects the copy stored on this machine. It doesn't change the password of the backup space itself.
 
@@ -332,7 +334,8 @@ storagebd refuses to run a program that other users could have replaced (one tha
 
 **"not logged in to storage.bd"**: only account actions (connect, activate, the balance) need a login: `sudo storagebd login`. Backups don't.
 
-**"storage.bd rejected this credential"**: the install secret was regenerated, or the space was cancelled. Check your storage.bd dashboard. After regenerating the secret: `sudo storagebd credential update NAME --install-secret`.
+**"storage.bd rejected this access key"**: a new secret key was issued for this space, the key was revoked, or the space was cancelled. Check your storage.bd dashboard. After a new secret key was issued: `sudo storagebd credential update NAME --secret`.
+
 
 **"balance too low to activate"**: top up in your storage.bd dashboard, then `sudo storagebd activate`.
 

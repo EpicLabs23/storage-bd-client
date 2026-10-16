@@ -85,7 +85,7 @@ func ValidateUUID(field, v string) error {
 
 func ValidateInstallSecret(v string) error {
 	if len(v) < 32 || len(v) > 256 || strings.ContainsAny(v, " \t\r\n") {
-		return errors.New("install secret looks malformed (expected the long hex string shown once at creation)")
+		return errors.New("secret key looks malformed (expected the long hex string shown once at creation)")
 	}
 	return nil
 }
@@ -117,10 +117,11 @@ func (c *Credential) validate() error {
 	if c.APIURL == "" {
 		return errors.New("API URL is required")
 	}
-	if err := ValidateUUID("tenant ID", c.TenantID); err != nil {
+	if err := ValidateUUID("Space ID", c.TenantID); err != nil {
 		return err
 	}
-	if err := ValidateUUID("install ID", c.InstallID); err != nil {
+	if err := ValidateUUID("Access key ID", c.InstallID); err != nil {
+
 		return err
 	}
 	if err := ValidateInstallSecret(c.InstallSecret); err != nil {
@@ -323,7 +324,7 @@ func translateUniqueErr(err error) error {
 	case strings.Contains(msg, "credentials.name"):
 		return errors.New("a credential with that name already exists")
 	case strings.Contains(msg, "credentials.api_url"), strings.Contains(msg, "credentials.tenant_id"):
-		return errors.New("a credential for that tenant already exists on this machine")
+		return errors.New("that backup space is already saved on this machine")
 	}
 	return err
 }

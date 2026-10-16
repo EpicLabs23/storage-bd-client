@@ -269,7 +269,7 @@ function render() {
     const sel = h("select", { "aria-label": "Backup repo" },
       app.state.credentials.map((c) => { const o = h("option", { value: c.name }, c.name + (c.default ? " (default)" : "")); o.selected = c.name === app.cred; return o; }));
     sel.addEventListener("change", () => { app.cred = sel.value; render(); });
-    side.append(h("div", { class: "repo-switch" }, h("label", {}, "Backup repo"), sel));
+    side.append(h("div", { class: "repo-switch" }, h("label", {}, "Backup space"), sel));
   }
   side.append(nav);
   const main = h("main", { class: "main", id: "main" });
@@ -377,19 +377,19 @@ function connectCard(sess, step) {
       render();
     } catch (err) {
       if (err.body && err.body.install_secret) {
-        dialog({ title: "Save this credential now", intro: "storage.bd created the backup space, but this machine couldn't save it. The install secret below is shown only once.",
-          body: h("pre", { class: "muted-box mono break" }, "tenant ID:      " + err.body.tenant_id + "\ninstall ID:     " + err.body.install_id + "\ninstall secret: " + err.body.install_secret) });
+        dialog({ title: "Save this access key now", intro: "storage.bd created the backup space, but this machine couldn't save it. The secret key below is shown only once.",
+          body: h("pre", { class: "muted-box mono break" }, "Space ID:       " + err.body.tenant_id + "\nAccess key ID:  " + err.body.install_id + "\nSecret key:     " + err.body.install_secret) });
       } else fail(err);
     } finally { btn.disabled = false; }
   });
   return h("div", { class: "card" }, step ? stepBar(step) : null,
     h("h1", {}, "Create a backup space for this machine"),
-    h("p", { class: "soft mt-4" }, "Signed in as " + sess.email + ". This machine gets its own encrypted repository on storage.bd."),
+    h("p", { class: "soft mt-4" }, "Signed in as " + sess.email + ". This machine gets its own encrypted backup space on storage.bd."),
     h("div", { class: "mt-20" }, form));
 }
 
-// A space created with "Add storage" in the storage.bd dashboard, which
-// shows its tenant ID, install ID and install secret once. Same as
+// A space created with "New backup space" in the storage.bd dashboard,
+// which shows its Space ID, Access key ID and Secret key once. Same as
 // `storagebd credential add`; no sign-in needed.
 function addExistingCard(sess) {
   const taken = app.state.credentials.some((c) => c.name === app.state.default_name);
@@ -399,7 +399,7 @@ function addExistingCard(sess) {
   const secret = input({ type: "password", autocomplete: "off", required: true, class: "mono" });
   const used = h("input", { type: "checkbox" });
   const pass = input({ type: "password", autocomplete: "off", class: "mono" });
-  const passField = field("Its encryption password", pass, "On the machine that used it: storagebd credential show NAME --reveal (the restic password).");
+  const passField = field("Its encryption password", pass, "On the machine that used it: storagebd credential show NAME --reveal (the encryption password).");
   passField.hidden = true;
   used.addEventListener("change", () => { passField.hidden = !used.checked; pass.required = used.checked; });
   const apiUrl = input({ placeholder: sess ? sess.api_url : app.state.default_api_url });
@@ -407,9 +407,9 @@ function addExistingCard(sess) {
   const btn = h("button", { class: "btn primary lg", type: "submit" }, "Add backup space");
   const form = h("form", {},
     field("Name on this machine", name, "Used in commands, for example: storagebd backup " + (name.value || "NAME")),
-    field("Tenant ID", tenant),
-    field("Install ID", install),
-    field("Install secret", secret, "Shown once in the dashboard. If you've lost it, regenerate it there."),
+    field("Space ID", tenant),
+    field("Access key ID", install),
+    field("Secret key", secret, "Shown once in the dashboard. If you've lost it, issue a new one there."),
     h("label", { class: "check mt-14" }, used, "This space already has backups from another machine"),
     passField,
     h("details", { class: "mt-14" }, h("summary", { class: "soft small" }, "Advanced"),
@@ -436,7 +436,7 @@ function addExistingCard(sess) {
   });
   return h("div", { class: "card" },
     h("h1", {}, "Use a backup space from your dashboard"),
-    h("p", { class: "soft mt-4" }, "Paste the details shown after \u201cAdd storage\u201d in your storage.bd dashboard. They're checked with storage.bd before anything is saved."),
+    h("p", { class: "soft mt-4" }, "Paste the details shown after \u201cNew backup space\u201d in your storage.bd dashboard. They're checked with storage.bd before anything is saved."),
     h("div", { class: "mt-20" }, form));
 }
 
@@ -449,7 +449,7 @@ function overview(main) {
   if (!c.password_escrowed_at && c.repo_initialized_at) {
     main.append(h("div", { class: "banner warn" }, icon("alert"), h("div", { class: "grow" },
       h("strong", {}, "Recovery copy pending. "),
-      "This repo's encryption password hasn't been saved with storage.bd yet. Until it is, this machine holds the only copy. It will be retried on the next backup.")));
+      "This space's encryption password hasn't been saved with storage.bd yet. Until it is, this machine holds the only copy. It will be retried on the next backup.")));
   }
   if (!c.retention && c.last_success) {
     main.append(h("div", { class: "banner info" }, icon("info"), h("div", { class: "grow" },
@@ -525,7 +525,7 @@ async function accountCardBody(c, body) {
     const mine = acct.tenants.find((t) => t.tenant_id === c.tenant_id);
     clear(body).append(h("div", { class: "grid-2" },
       h("div", {}, h("div", { class: "soft small" }, "Balance"), h("div", { class: "big" }, acct.balance + " " + acct.currency)),
-      mine ? h("div", {}, h("div", { class: "soft small" }, "This repo's plan"),
+      mine ? h("div", {}, h("div", { class: "soft small" }, "This backup space"),
         h("div", { class: "big" }, mine.storage_gb + " GB "), h("div", { class: "mt-4" }, planBadge(mine), mine.state === "active" ? h("span", { class: "small soft" }, " renews " + new Date(mine.next_billing_at).toLocaleDateString()) : null)) : null));
     if (mine && mine.state === "suspended" && !mine.suspend_reason) {
       body.append(h("div", { class: "banner warn mt-14" }, icon("alert"), h("div", { class: "grow" }, "This backup space isn't active yet, so backups will be refused."),
@@ -538,9 +538,12 @@ async function accountCardBody(c, body) {
     clear(body).append(h("p", { class: "soft" }, err.message));
   }
 }
+// Same state names as the storage.bd dashboard.
+const STATE_LABEL = { active: "Active", grace: "Over limit", suspended: "Suspended", cancelled: "Cancelled", purged: "Deleted" };
 function planBadge(t) {
   const map = { active: "ok", grace: "warn", suspended: "bad", cancelled: "bad" };
-  return h("span", { class: "badge " + (map[t.state] || "") }, t.state + (t.suspend_reason ? " (" + t.suspend_reason + ")" : ""));
+  const reason = !t.suspend_reason ? "" : t.suspend_reason === "balance_exhausted" ? " (balance ran out)" : " (" + t.suspend_reason + ")";
+  return h("span", { class: "badge " + (map[t.state] || "") }, (STATE_LABEL[t.state] || t.state) + reason);
 }
 function accountCard(c) {
   const body = h("div", {}, loading("Checking your storage.bd account…"));
@@ -601,7 +604,8 @@ function sourceRow(c, s) {
     h("button", { class: "btn ghost sm", type: "button", title: "Back up only this source", "aria-label": "Back up " + s.name, disabled: !!app.live[c.name], onclick: () => startBackup(c, [s.name]) }, icon("play")),
     h("button", { class: "btn ghost sm", type: "button", "aria-label": "Edit " + s.name, onclick: () => sourceDialog(c, s.kind === "dir" ? "dir" : "db", s) }, icon("edit")),
     h("button", { class: "btn ghost sm danger", type: "button", "aria-label": "Remove " + s.name, onclick: async () => {
-      if (!(await confirmDialog("Remove " + s.name + "?", "It won't be backed up any more. Existing snapshots stay in the repo and can still be restored.", "Remove", true))) return;
+      if (!(await confirmDialog("Remove " + s.name + "?", "It won't be backed up any more. Existing snapshots stay in the backup space and can still be restored."
+, "Remove", true))) return;
       try { await api("DELETE", credPath(c.name) + "/sources/" + enc(s.name)); toast("Removed."); go("sources"); await refresh(); } catch (e) { fail(e); }
     } }, icon("trash")));
 }

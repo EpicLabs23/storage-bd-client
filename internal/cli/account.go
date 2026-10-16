@@ -161,16 +161,21 @@ func newAccountCmd(a *app) *cobra.Command {
 
 		fmt.Fprintf(out, "Account:  %s\nAPI:      %s\nBalance:  %s %s\n\n", o.Email, o.APIURL, o.Balance, o.Currency)
 		if len(o.Tenants) == 0 {
-			fmt.Fprintln(out, "No backup repos yet. Create one for this machine with: storagebd connect")
+			fmt.Fprintln(out, "No backup spaces yet. Create one for this machine with: storagebd connect")
 			return nil
 		}
 		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "LABEL\tSIZE\tSTATE\tRENEWS\tON THIS MACHINE\tTENANT")
+		fmt.Fprintln(tw, "NAME\tSIZE\tSTATE\tRENEWS\tON THIS MACHINE\tSPACE ID")
 		for _, t := range o.Tenants {
-			state := t.State
+			state := spaceStateLabel(t.State)
 			if t.SuspendReason != nil && *t.SuspendReason != "" {
-				state += " (" + *t.SuspendReason + ")"
+				reason := *t.SuspendReason
+				if reason == "balance_exhausted" {
+					reason = "balance ran out"
+				}
+				state += " (" + reason + ")"
 			}
+
 			renews := "-"
 			if t.State == "active" || t.State == "grace" {
 				renews = t.NextBillingAt.Local().Format(time.DateOnly)
@@ -192,12 +197,12 @@ func newConnectCmd(a *app) *cobra.Command {
 	var noActivate, yes bool
 	cmd := &cobra.Command{
 		Use:   "connect",
-		Short: "Create a backup repo for this machine on your storage.bd account",
-		Long: `Create a new storage.bd backup repo (tenant) for this machine and store its
-credential here, with a newly generated restic password.
+		Short: "Create a backup space for this machine on your storage.bd account",
+		Long: `Create a new storage.bd backup space for this machine and save its access
+key here, with a newly generated encryption (restic) password.
 
 Activation charges the first month (storage size x the current per-GB rate)
-from your account balance. If the balance is too low the repo is still created
+from your account balance. If the balance is too low the space is still created
 and saved, and you can top up and run "storagebd activate" later.
 
 Requires: storagebd login`,
@@ -206,9 +211,9 @@ Requires: storagebd login`,
 	resolve := apiURLFlag(cmd)
 	f := cmd.Flags()
 	f.StringVar(&name, "name", account.DefaultName(), "local credential name")
-	f.StringVar(&label, "label", account.DefaultLabel(), "repo label shown in the storage.bd dashboard")
+	f.StringVar(&label, "label", account.DefaultLabel(), "space name shown in the storage.bd dashboard")
 	f.IntVar(&storageGB, "storage-gb", 0, "storage to pay for, in GB (required)")
-	f.BoolVar(&noActivate, "no-activate", false, "create the repo but don't activate (charge) it yet")
+	f.BoolVar(&noActivate, "no-activate", false, "create the space but don't activate (charge) it yet")
 	f.BoolVarP(&yes, "yes", "y", false, "don't ask to confirm the charge")
 	cmd.MarkFlagRequired("storage-gb")
 
@@ -229,7 +234,7 @@ Requires: storagebd login`,
 			if err != nil {
 				return err
 			}
-			ok, err := confirm(fmt.Sprintf("Create and activate a %d GB repo %q? This charges %s %s now (%s/GB/month), then monthly.",
+			ok, err := confirm(fmt.Sprintf("Create and activate a %d GB backup space %q? This charges %s %s now (%s/GB/month), then monthly.",
 				storageGB, label, q.Monthly, q.Currency, q.PricePerGB))
 			if err != nil {
 				return err
@@ -244,11 +249,11 @@ Requires: storagebd login`,
 		})
 		var orphan *account.OrphanError
 		if errors.As(err, &orphan) {
-			// The install secret can't be fetched again; this is the only
+			// The secret key can't be fetched again; this is the only
 			// chance to keep it. stderr, so it isn't piped onward by accident.
-			fmt.Fprintf(os.Stderr, "\nSave these now; the install secret cannot be shown again:\n"+
-				"  tenant ID:      %s\n  install ID:     %s\n  install secret: %s\n"+
-				"Then add it with: storagebd credential add <name> --tenant-id %s --install-id %s\n\n",
+			fmt.Fprintf(os.Stderr, "\nSave these now; the secret key cannot be shown again:\n"+
+				"  Space ID:       %s\n  Access key ID:  %s\n  Secret key:     %s\n"+
+				"Then add it with: storagebd credential add <name> --space-id %s --key-id %s\n\n",
 				orphan.TenantID, orphan.InstallID, orphan.InstallSecret, orphan.TenantID, orphan.InstallID)
 			return err
 		}
@@ -256,7 +261,7 @@ Requires: storagebd login`,
 			return err
 		}
 
-		fmt.Fprintf(out, "Created repo %q (tenant %s) and saved it as credential %q", label, res.Credential.TenantID, res.Credential.Name)
+		fmt.Fprintf(out, "Created backup space %q (space ID %s) and saved it as credential %q", label, res.Credential.TenantID, res.Credential.Name)
 		if res.Credential.IsDefault {
 			fmt.Fprint(out, " (default)")
 		}
@@ -278,7 +283,7 @@ func newActivateCmd(a *app) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "activate [credential]",
-		Short: "Activate (pay for) a repo created with --no-activate or after topping up",
+		Short: "Activate (pay for) a backup space created with --no-activate or after topping up",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, err := a.accounts()
@@ -326,7 +331,8 @@ func newCredentialTestCmd(a *app) *cobra.Command {
 			if err := m.TestCredential(cmd.Context(), cred); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "OK: storage.bd accepted credential %q (tenant %s)\n", cred.Name, cred.TenantID)
+			fmt.Fprintf(cmd.OutOrStdout(), "OK: storage.bd accepted credential %q (space ID %s)\n", cred.Name, cred.TenantID)
+
 			return nil
 		},
 	}
@@ -347,4 +353,22 @@ func credentialArg(cmd *cobra.Command, s *store.Store, args []string) (*store.Cr
 		return nil, errors.New("no default credential; pass a name, or run: storagebd connect")
 	}
 	return c, err
+}
+
+// spaceStateLabel matches the state names the storage.bd dashboard shows.
+// --json output keeps the raw API values.
+func spaceStateLabel(s string) string {
+	switch s {
+	case "active":
+		return "Active"
+	case "grace":
+		return "Over limit"
+	case "suspended":
+		return "Suspended"
+	case "cancelled":
+		return "Cancelled"
+	case "purged":
+		return "Deleted"
+	}
+	return s
 }

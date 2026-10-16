@@ -218,7 +218,7 @@ func TestBadInstallSecretFailsBeforeRestic(t *testing.T) {
 	m, cred, f := setup(t)
 	cred.InstallSecret = strings.Repeat("cd", 32)
 	_, err := m.Open(context.Background(), cred)
-	if err == nil || !strings.Contains(err.Error(), "rejected this credential") {
+	if err == nil || !strings.Contains(err.Error(), "rejected this access key") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.Files) != 0 {

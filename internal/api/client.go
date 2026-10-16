@@ -232,7 +232,7 @@ func (c *Client) CreateTenant(ctx context.Context, accessToken, label string, st
 		return nil, err
 	}
 	if out.InstallSecret == "" || out.Tenant.TenantID == "" {
-		return nil, errors.New("storage.bd created the tenant but returned no credential")
+		return nil, errors.New("storage.bd created the backup space but returned no access key")
 	}
 	return &out, nil
 }
@@ -285,7 +285,8 @@ func (c *Client) DataToken(ctx context.Context, tenantID, installID, installSecr
 		body: map[string]string{"tenant_id": tenantID, "install_id": installID, "install_secret": installSecret}}, &out)
 	if err != nil {
 		if StatusOf(err) == http.StatusUnauthorized {
-			return nil, errors.New("storage.bd rejected this credential (wrong install secret, revoked install, or tenant not on this install)")
+			return nil, errors.New("storage.bd rejected this access key (wrong secret key, the key was replaced or revoked, or the Space ID doesn't belong to this key)")
+
 		}
 		return nil, err
 	}

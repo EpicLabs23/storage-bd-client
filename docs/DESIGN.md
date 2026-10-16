@@ -2,6 +2,18 @@
 
 `storagebd` is the open-source (Apache-2.0) storage.bd backup client for Linux machines. It wraps the official restic binary and talks to the storage.bd API for accounts, data tokens and password escrow. This document records the design and the reasoning behind it, for contributors; the user-facing docs are [INSTALL.md](INSTALL.md) and [USER_GUIDE.md](USER_GUIDE.md).
 
+**Names.** The code and the storage.bd API use the API's own names; everything a user sees (CLI text, flags, web UI, user docs) uses the storage.bd dashboard's words. Keep the two lined up:
+
+| In code / API | Shown to users |
+|---|---|
+| tenant (`tenant_id`), repo | backup space (Space ID) |
+| install (`install_id`, `install_secret`) | access key (Access key ID, Secret key) |
+| restic password | encryption password |
+| `grace` / `purged` state | Over limit / Deleted |
+
+`--json` output keeps the API field names. The pre-rename flags (`--tenant-id`, `--install-id`, `--install-secret[-file]`) stay as hidden aliases (`legacyFlag` in `internal/cli/credential.go`).
+
+
 ## Decisions (2026-10-10)
 
 | Decision | Choice | Why |

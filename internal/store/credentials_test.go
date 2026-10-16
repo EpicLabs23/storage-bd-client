@@ -114,7 +114,7 @@ func TestUniqueConstraints(t *testing.T) {
 	if err := s.CreateCredential(ctx, newCred("one", tenantB)); err == nil || !strings.Contains(err.Error(), "name already exists") {
 		t.Fatalf("duplicate name err = %v", err)
 	}
-	if err := s.CreateCredential(ctx, newCred("other", tenantA)); err == nil || !strings.Contains(err.Error(), "tenant already exists") {
+	if err := s.CreateCredential(ctx, newCred("other", tenantA)); err == nil || !strings.Contains(err.Error(), "already saved on this machine") {
 		t.Fatalf("duplicate tenant err = %v", err)
 	}
 }

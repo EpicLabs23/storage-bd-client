@@ -18,11 +18,12 @@ func newCredentialCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "credential",
 		Aliases: []string{"cred", "credentials"},
-		Short:   "Manage storage.bd connect credentials stored on this machine",
-		Long: `A credential links this machine to one storage.bd backup repo (tenant):
-the install ID/secret used to authenticate to storage.bd, and the restic
-password that encrypts the repo. This machine holds the primary copy of that
-password; storage.bd keeps only a support-gated escrow copy.`,
+		Short:   "Manage the backup spaces this machine can use",
+		Long: `A credential is this machine's saved access to one storage.bd backup space:
+the space ID, the access key (ID and secret key) used to sign in to storage.bd,
+and the encryption (restic) password that encrypts the backups. This machine
+holds the primary copy of that password; storage.bd keeps only a
+support-gated escrow copy.`,
 	}
 	cmd.AddCommand(
 		newCredentialListCmd(a),
@@ -109,7 +110,7 @@ func newCredentialListCmd(a *app) *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "\tNAME\tTENANT\tAPI\tESCROWED")
+			fmt.Fprintln(tw, "\tNAME\tSPACE ID\tAPI\tESCROWED")
 			for _, c := range creds {
 				mark := ""
 				if c.IsDefault {
@@ -136,28 +137,34 @@ func newCredentialAddCmd(a *app) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name>",
-		Short: "Store a connect credential from the storage.bd dashboard",
-		Long: `Store a connect credential for one storage.bd tenant.
+		Short: "Save a backup space from the storage.bd dashboard on this machine",
+		Long: `Save access to one storage.bd backup space on this machine, using the
+Space ID, Access key ID and Secret key shown in the storage.bd dashboard.
 
-The install secret is prompted for (no echo), or read from --install-secret-file
-(use "-" for stdin). It is never accepted as a plain argument, since arguments
-are visible to other users in the process list.
+The secret key is prompted for (no echo), or read from --secret-file (use "-"
+for stdin). It is never accepted as a plain argument, since arguments are
+visible to other users in the process list.
 
-For a new, empty repo a strong restic password is generated for you. If the
-repo was already initialized elsewhere, pass --existing-repo to be prompted for
-its password instead (or --restic-password-file).`,
-		Example: `  storagebd credential add laptop --tenant-id 3f1c... --install-id 9a2e...
-  storagebd credential add web1 --tenant-id ... --install-id ... --install-secret-file - < secret.txt`,
+For a new, empty space a strong encryption (restic) password is generated for
+you. If the space already has backups from another machine, pass
+--existing-repo to be prompted for its password instead (or
+--restic-password-file).`,
+		Example: `  storagebd credential add laptop --space-id 3f1c... --key-id 9a2e...
+  storagebd credential add web1 --space-id ... --key-id ... --secret-file - < secret.txt`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if err := store.ValidateName(name); err != nil {
 				return err
 			}
-			if err := store.ValidateUUID("--tenant-id", tenantID); err != nil {
+			if tenantID == "" || installID == "" {
+				return errors.New("--space-id and --key-id are required (both are shown in the storage.bd dashboard)")
+			}
+			if err := store.ValidateUUID("--space-id", tenantID); err != nil {
+
 				return err
 			}
-			if err := store.ValidateUUID("--install-id", installID); err != nil {
+			if err := store.ValidateUUID("--key-id", installID); err != nil {
 				return err
 			}
 			normURL, err := store.ValidateAPIURL(apiURL, allowHTTP)
@@ -165,10 +172,10 @@ its password instead (or --restic-password-file).`,
 				return err
 			}
 			if installSecretFile == "-" && resticPassFile == "-" {
-				return errors.New("only one of --install-secret-file / --restic-password-file can read stdin")
+				return errors.New("only one of --secret-file / --restic-password-file can read stdin")
 			}
 
-			secret, err := readSecret(installSecretFile, "Install secret: ")
+			secret, err := readSecret(installSecretFile, "Secret key: ")
 			if err != nil {
 				return err
 			}
@@ -211,24 +218,26 @@ its password instead (or --restic-password-file).`,
 			}
 			fmt.Fprintln(out)
 			if generated {
-				fmt.Fprintln(out, "Generated a new restic password for this repo. It is escrowed with storage.bd on first backup;")
+				fmt.Fprintln(out, "Generated a new encryption password for this space. It is escrowed with storage.bd on first backup;")
 				fmt.Fprintf(out, "until then this machine holds the only copy (view it with: storagebd credential show %s --reveal).\n", name)
 			}
 			return nil
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&tenantID, "tenant-id", "", "tenant ID (required)")
-	f.StringVar(&installID, "install-id", "", "install ID (required)")
+	f.StringVar(&tenantID, "space-id", "", "Space ID from the dashboard (required)")
+	f.StringVar(&installID, "key-id", "", "Access key ID from the dashboard (required)")
 	f.StringVar(&apiURL, "api-url", DefaultAPIURL, "storage.bd API base URL")
 	f.BoolVar(&allowHTTP, "allow-http", false, "permit a non-loopback plain-http API URL")
 	f.StringVar(&email, "account-email", "", "storage.bd account email (informational)")
-	f.StringVar(&installSecretFile, "install-secret-file", "", `read the install secret from a file ("-" = stdin)`)
-	f.StringVar(&resticPassFile, "restic-password-file", "", `read an existing repo's restic password from a file ("-" = stdin)`)
-	f.BoolVar(&existingRepo, "existing-repo", false, "repo is already initialized: prompt for its restic password")
+	f.StringVar(&installSecretFile, "secret-file", "", `read the secret key from a file ("-" = stdin)`)
+	f.StringVar(&resticPassFile, "restic-password-file", "", `read an existing space's encryption password from a file ("-" = stdin)`)
+	f.BoolVar(&existingRepo, "existing-repo", false, "the space already has backups: prompt for its encryption password")
 	f.BoolVar(&makeDefault, "default", false, "make this the default credential")
-	cmd.MarkFlagRequired("tenant-id")
-	cmd.MarkFlagRequired("install-id")
+	// Pre-rename spellings, still accepted so existing scripts keep working.
+	legacyFlag(cmd, &tenantID, "tenant-id", "space-id")
+	legacyFlag(cmd, &installID, "install-id", "key-id")
+	legacyFlag(cmd, &installSecretFile, "install-secret-file", "secret-file")
 	cmd.MarkFlagsMutuallyExclusive("existing-repo", "restic-password-file")
 	return cmd
 }
@@ -274,14 +283,14 @@ func newCredentialShowCmd(a *app) *cobra.Command {
 			fmt.Fprintf(tw, "Name:\t%s\n", v.Name)
 			fmt.Fprintf(tw, "Default:\t%t\n", v.Default)
 			fmt.Fprintf(tw, "API URL:\t%s\n", v.APIURL)
-			fmt.Fprintf(tw, "Tenant ID:\t%s\n", v.TenantID)
-			fmt.Fprintf(tw, "Install ID:\t%s\n", v.InstallID)
+			fmt.Fprintf(tw, "Space ID:\t%s\n", v.TenantID)
+			fmt.Fprintf(tw, "Access key ID:\t%s\n", v.InstallID)
 			if v.AccountEmail != "" {
 				fmt.Fprintf(tw, "Account:\t%s\n", v.AccountEmail)
 			}
-			fmt.Fprintf(tw, "Install secret:\t%s\n", secretOrMask(c.InstallSecret))
-			fmt.Fprintf(tw, "Restic password:\t%s\n", secretOrMask(c.ResticPassword))
-			fmt.Fprintf(tw, "Repo initialized:\t%s\n", fmtTime(v.RepoInitializedAt))
+			fmt.Fprintf(tw, "Secret key:\t%s\n", secretOrMask(c.InstallSecret))
+			fmt.Fprintf(tw, "Encryption password:\t%s\n", secretOrMask(c.ResticPassword))
+			fmt.Fprintf(tw, "Space initialized:\t%s\n", fmtTime(v.RepoInitializedAt))
 			fmt.Fprintf(tw, "Password escrowed:\t%s\n", fmtTime(v.PasswordEscrowedAt))
 			fmt.Fprintf(tw, "Created:\t%s\n", v.CreatedAt.Local().Format(time.DateTime))
 			fmt.Fprintf(tw, "Updated:\t%s\n", v.UpdatedAt.Local().Format(time.DateTime))
@@ -294,7 +303,7 @@ func newCredentialShowCmd(a *app) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&reveal, "reveal", false, "include the install secret and restic password")
+	cmd.Flags().BoolVar(&reveal, "reveal", false, "include the secret key and encryption password")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd
 }
@@ -318,10 +327,10 @@ func newCredentialUpdateCmd(a *app) *cobra.Command {
 		Short: "Change a stored credential",
 		Long: `Change fields of a stored credential. Only the flags you pass are changed.
 
---install-secret replaces the install secret after it was regenerated in the
-storage.bd dashboard. --restic-password only corrects the locally stored copy;
-it does NOT change the repo's actual password. Storing a wrong value here will
-make every backup and restore fail.`,
+--secret replaces the secret key after a new one was issued in the storage.bd
+dashboard. --restic-password only corrects the locally stored copy of the
+encryption password; it does NOT change the space's actual password. Storing a
+wrong value here will make every backup and restore fail.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.openStore()
@@ -334,7 +343,7 @@ make every backup and restore fail.`,
 			}
 
 			if installSecretFile == "-" && resticPassFile == "-" {
-				return errors.New("only one of --install-secret-file / --restic-password-file can read stdin")
+				return errors.New("only one of --secret-file / --restic-password-file can read stdin")
 			}
 			changed := false
 			f := cmd.Flags()
@@ -354,13 +363,13 @@ make every backup and restore fail.`,
 				c.IsDefault, changed = true, true
 			}
 			if promptInstallSecret || installSecretFile != "" {
-				if c.InstallSecret, err = readSecret(installSecretFile, "New install secret: "); err != nil {
+				if c.InstallSecret, err = readSecret(installSecretFile, "New secret key: "); err != nil {
 					return err
 				}
 				changed = true
 			}
 			if promptResticPassword || resticPassFile != "" {
-				if c.ResticPassword, err = readSecret(resticPassFile, "Correct restic password: "); err != nil {
+				if c.ResticPassword, err = readSecret(resticPassFile, "Correct encryption password: "); err != nil {
 					return err
 				}
 				changed = true
@@ -381,11 +390,13 @@ make every backup and restore fail.`,
 	f.BoolVar(&allowHTTP, "allow-http", false, "permit a non-loopback plain-http API URL")
 	f.StringVar(&email, "account-email", "", "storage.bd account email (informational)")
 	f.BoolVar(&makeDefault, "default", false, "make this the default credential")
-	f.BoolVar(&promptInstallSecret, "install-secret", false, "prompt for a new install secret")
-	f.StringVar(&installSecretFile, "install-secret-file", "", `read a new install secret from a file ("-" = stdin)`)
-	f.BoolVar(&promptResticPassword, "restic-password", false, "prompt for the correct restic password (local copy only)")
-	f.StringVar(&resticPassFile, "restic-password-file", "", `read the correct restic password from a file ("-" = stdin)`)
-	cmd.MarkFlagsMutuallyExclusive("install-secret", "install-secret-file")
+	f.BoolVar(&promptInstallSecret, "secret", false, "prompt for a new secret key")
+	f.StringVar(&installSecretFile, "secret-file", "", `read a new secret key from a file ("-" = stdin)`)
+	f.BoolVar(&promptResticPassword, "restic-password", false, "prompt for the correct encryption password (local copy only)")
+	f.StringVar(&resticPassFile, "restic-password-file", "", `read the correct encryption password from a file ("-" = stdin)`)
+	legacyBoolFlag(cmd, &promptInstallSecret, "install-secret", "secret")
+	legacyFlag(cmd, &installSecretFile, "install-secret-file", "secret-file")
+	cmd.MarkFlagsMutuallyExclusive("secret", "secret-file", "install-secret", "install-secret-file")
 	cmd.MarkFlagsMutuallyExclusive("restic-password", "restic-password-file")
 	return cmd
 }
@@ -415,11 +426,11 @@ func newCredentialRemoveCmd(a *app) *cobra.Command {
 		Use:     "remove <name>",
 		Aliases: []string{"rm", "delete"},
 		Short:   "Delete a credential from this machine",
-		Long: `Delete a credential from this machine. The repo and its snapshots on
-storage.bd are not touched.
+		Long: `Delete a credential from this machine. The backup space and its snapshots
+on storage.bd are not touched.
 
-If the restic password was never escrowed and you have no other copy, the
-repo's data cannot be decrypted after this.`,
+If the encryption password was never escrowed and you have no other copy, the
+space's backups cannot be decrypted after this.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := a.openStore()
@@ -433,7 +444,8 @@ repo's data cannot be decrypted after this.`,
 			if !yes {
 				q := fmt.Sprintf("Delete credential %q?", c.Name)
 				if c.PasswordEscrowedAt == nil {
-					q = fmt.Sprintf("Credential %q's restic password was never escrowed with storage.bd. "+
+					q = fmt.Sprintf("Credential %q's encryption password was never escrowed with storage.bd. "+
+
 						"Without another copy, its backups become unreadable. Delete anyway?", c.Name)
 				}
 				ok, err := confirm(q)
@@ -453,4 +465,19 @@ repo's data cannot be decrypted after this.`,
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	return cmd
+}
+
+// legacyFlag registers a pre-rename spelling of a string flag (e.g.
+// --tenant-id for --space-id). It writes to the same variable, is hidden
+// from --help, and can't be combined with the new spelling.
+func legacyFlag(cmd *cobra.Command, p *string, oldName, newName string) {
+	cmd.Flags().StringVar(p, oldName, "", "old name for --"+newName)
+	_ = cmd.Flags().MarkHidden(oldName)
+	cmd.MarkFlagsMutuallyExclusive(oldName, newName)
+}
+
+func legacyBoolFlag(cmd *cobra.Command, p *bool, oldName, newName string) {
+	cmd.Flags().BoolVar(p, oldName, false, "old name for --"+newName)
+	_ = cmd.Flags().MarkHidden(oldName)
+	cmd.MarkFlagsMutuallyExclusive(oldName, newName)
 }
