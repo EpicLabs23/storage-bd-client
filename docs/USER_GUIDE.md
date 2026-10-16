@@ -59,13 +59,13 @@ No storage.bd account yet? Sign up at [storage.bd](https://storage.bd) and confi
 
 ### Already created a backup space in the storage.bd dashboard?
 
-**New backup space** in the dashboard shows a **Space ID**, an **Access key ID** and a **Secret key** (the secret key only once). To use that space on this machine:
+**New backup space** in the dashboard shows a **Space ID**, an **Space access key ID** and a **Space secret key** (the space secret key only once). To use that space on this machine:
 
 - **Web page:** click **Use it on this machine** under the sign-in form (or *Settings* → **Use a space from the dashboard**) and paste the three values. You don't need to sign in. storagebd checks them with storage.bd before saving.
 - **Terminal:**
   ```sh
-  sudo storagebd credential add NAME --space-id <Space ID> --key-id <Access key ID>
-  # prompts for the secret key
+  sudo storagebd credential add NAME --space-id <Space ID> --key-id <Space access key ID>
+  # prompts for the space secret key
   ```
 
 A space made in the dashboard may start suspended; activate it there before the first backup. For a new, empty space storagebd generates the encryption password. If the space already has backups from another machine, tick **This space already has backups from another machine** (terminal: `--existing-repo`) and enter that machine's encryption password.
@@ -265,8 +265,8 @@ Restoring onto a different machine needs that backup space's credential.
 
 - **The old machine still works:** on it, run `sudo storagebd credential show NAME --reveal`. On the new machine, enter those values in the web page (*Settings* → **Use a space from the dashboard**, ticking **already has backups**), or:
   ```sh
-  sudo storagebd credential add NAME --space-id <Space ID> --key-id <Access key ID> --existing-repo
-  # prompts for the secret key, then the space's encryption password
+  sudo storagebd credential add NAME --space-id <Space ID> --key-id <Space access key ID> --existing-repo
+  # prompts for the space secret key, then the space's encryption password
   ```
   Then add the same sources (or new ones) and restore as usual.
 - **The old machine is gone:** contact storage.bd support. They can recover the backup space's credentials and the escrowed encryption password, after verifying it's you.
@@ -294,7 +294,7 @@ Credentials are what link this machine to a backup space. They're stored only on
 sudo storagebd credential list                       # never shows secrets
 sudo storagebd credential show [NAME] [--reveal] [--json]
 sudo storagebd credential add NAME --space-id ID --key-id ID [--existing-repo]
-sudo storagebd credential update NAME --secret        # after a new secret key was issued
+sudo storagebd credential update NAME --secret        # after a new space secret key was issued
 sudo storagebd credential update NAME --rename NEWNAME
 sudo storagebd credential use NAME                   # make it the default
 sudo storagebd credential test [NAME]                # check storage.bd accepts it
@@ -334,8 +334,7 @@ storagebd refuses to run a program that other users could have replaced (one tha
 
 **"not logged in to storage.bd"**: only account actions (connect, activate, the balance) need a login: `sudo storagebd login`. Backups don't.
 
-**"storage.bd rejected this access key"**: a new secret key was issued for this space, the key was revoked, or the space was cancelled. Check your storage.bd dashboard. After a new secret key was issued: `sudo storagebd credential update NAME --secret`.
-
+**"storage.bd rejected this space access key"**: a new space secret key was issued for this space, the key was revoked, or the space was cancelled. Check your storage.bd dashboard. After a new space secret key was issued: `sudo storagebd credential update NAME --secret`.
 
 **"balance too low to activate"**: top up in your storage.bd dashboard, then `sudo storagebd activate`.
 

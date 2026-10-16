@@ -219,7 +219,6 @@ type OrphanError struct {
 
 func (e *OrphanError) Error() string {
 	return fmt.Sprintf("backup space %s was created on storage.bd but could not be saved locally: %v", e.TenantID, e.Err)
-
 }
 
 func (e *OrphanError) Unwrap() error { return e.Err }

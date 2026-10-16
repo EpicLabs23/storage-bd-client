@@ -20,7 +20,7 @@ func newCredentialCmd(a *app) *cobra.Command {
 		Aliases: []string{"cred", "credentials"},
 		Short:   "Manage the backup spaces this machine can use",
 		Long: `A credential is this machine's saved access to one storage.bd backup space:
-the space ID, the access key (ID and secret key) used to sign in to storage.bd,
+the space ID, the access key (ID and space secret key) used to sign in to storage.bd,
 and the encryption (restic) password that encrypts the backups. This machine
 holds the primary copy of that password; storage.bd keeps only a
 support-gated escrow copy.`,
@@ -139,9 +139,12 @@ func newCredentialAddCmd(a *app) *cobra.Command {
 		Use:   "add <name>",
 		Short: "Save a backup space from the storage.bd dashboard on this machine",
 		Long: `Save access to one storage.bd backup space on this machine, using the
-Space ID, Access key ID and Secret key shown in the storage.bd dashboard.
+Space ID, Space access key ID and Space secret key shown in the storage.bd
+dashboard. These belong to that one space and are only for backups; they are
+not a reseller's API client ID / API secret.
 
-The secret key is prompted for (no echo), or read from --secret-file (use "-"
+
+The space secret key is prompted for (no echo), or read from --secret-file (use "-"
 for stdin). It is never accepted as a plain argument, since arguments are
 visible to other users in the process list.
 
@@ -161,7 +164,6 @@ you. If the space already has backups from another machine, pass
 				return errors.New("--space-id and --key-id are required (both are shown in the storage.bd dashboard)")
 			}
 			if err := store.ValidateUUID("--space-id", tenantID); err != nil {
-
 				return err
 			}
 			if err := store.ValidateUUID("--key-id", installID); err != nil {
@@ -175,7 +177,7 @@ you. If the space already has backups from another machine, pass
 				return errors.New("only one of --secret-file / --restic-password-file can read stdin")
 			}
 
-			secret, err := readSecret(installSecretFile, "Secret key: ")
+			secret, err := readSecret(installSecretFile, "Space secret key: ")
 			if err != nil {
 				return err
 			}
@@ -226,11 +228,11 @@ you. If the space already has backups from another machine, pass
 	}
 	f := cmd.Flags()
 	f.StringVar(&tenantID, "space-id", "", "Space ID from the dashboard (required)")
-	f.StringVar(&installID, "key-id", "", "Access key ID from the dashboard (required)")
+	f.StringVar(&installID, "key-id", "", "Space access key ID from the dashboard (required)")
 	f.StringVar(&apiURL, "api-url", DefaultAPIURL, "storage.bd API base URL")
 	f.BoolVar(&allowHTTP, "allow-http", false, "permit a non-loopback plain-http API URL")
 	f.StringVar(&email, "account-email", "", "storage.bd account email (informational)")
-	f.StringVar(&installSecretFile, "secret-file", "", `read the secret key from a file ("-" = stdin)`)
+	f.StringVar(&installSecretFile, "secret-file", "", `read the space secret key from a file ("-" = stdin)`)
 	f.StringVar(&resticPassFile, "restic-password-file", "", `read an existing space's encryption password from a file ("-" = stdin)`)
 	f.BoolVar(&existingRepo, "existing-repo", false, "the space already has backups: prompt for its encryption password")
 	f.BoolVar(&makeDefault, "default", false, "make this the default credential")
@@ -284,11 +286,11 @@ func newCredentialShowCmd(a *app) *cobra.Command {
 			fmt.Fprintf(tw, "Default:\t%t\n", v.Default)
 			fmt.Fprintf(tw, "API URL:\t%s\n", v.APIURL)
 			fmt.Fprintf(tw, "Space ID:\t%s\n", v.TenantID)
-			fmt.Fprintf(tw, "Access key ID:\t%s\n", v.InstallID)
+			fmt.Fprintf(tw, "Space access key ID:\t%s\n", v.InstallID)
 			if v.AccountEmail != "" {
 				fmt.Fprintf(tw, "Account:\t%s\n", v.AccountEmail)
 			}
-			fmt.Fprintf(tw, "Secret key:\t%s\n", secretOrMask(c.InstallSecret))
+			fmt.Fprintf(tw, "Space secret key:\t%s\n", secretOrMask(c.InstallSecret))
 			fmt.Fprintf(tw, "Encryption password:\t%s\n", secretOrMask(c.ResticPassword))
 			fmt.Fprintf(tw, "Space initialized:\t%s\n", fmtTime(v.RepoInitializedAt))
 			fmt.Fprintf(tw, "Password escrowed:\t%s\n", fmtTime(v.PasswordEscrowedAt))
@@ -303,7 +305,7 @@ func newCredentialShowCmd(a *app) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&reveal, "reveal", false, "include the secret key and encryption password")
+	cmd.Flags().BoolVar(&reveal, "reveal", false, "include the space secret key and encryption password")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd
 }
@@ -327,7 +329,7 @@ func newCredentialUpdateCmd(a *app) *cobra.Command {
 		Short: "Change a stored credential",
 		Long: `Change fields of a stored credential. Only the flags you pass are changed.
 
---secret replaces the secret key after a new one was issued in the storage.bd
+--secret replaces the space secret key after a new one was issued in the storage.bd
 dashboard. --restic-password only corrects the locally stored copy of the
 encryption password; it does NOT change the space's actual password. Storing a
 wrong value here will make every backup and restore fail.`,
@@ -363,7 +365,7 @@ wrong value here will make every backup and restore fail.`,
 				c.IsDefault, changed = true, true
 			}
 			if promptInstallSecret || installSecretFile != "" {
-				if c.InstallSecret, err = readSecret(installSecretFile, "New secret key: "); err != nil {
+				if c.InstallSecret, err = readSecret(installSecretFile, "New space secret key: "); err != nil {
 					return err
 				}
 				changed = true
@@ -390,8 +392,8 @@ wrong value here will make every backup and restore fail.`,
 	f.BoolVar(&allowHTTP, "allow-http", false, "permit a non-loopback plain-http API URL")
 	f.StringVar(&email, "account-email", "", "storage.bd account email (informational)")
 	f.BoolVar(&makeDefault, "default", false, "make this the default credential")
-	f.BoolVar(&promptInstallSecret, "secret", false, "prompt for a new secret key")
-	f.StringVar(&installSecretFile, "secret-file", "", `read a new secret key from a file ("-" = stdin)`)
+	f.BoolVar(&promptInstallSecret, "secret", false, "prompt for a new space secret key")
+	f.StringVar(&installSecretFile, "secret-file", "", `read a new space secret key from a file ("-" = stdin)`)
 	f.BoolVar(&promptResticPassword, "restic-password", false, "prompt for the correct encryption password (local copy only)")
 	f.StringVar(&resticPassFile, "restic-password-file", "", `read the correct encryption password from a file ("-" = stdin)`)
 	legacyBoolFlag(cmd, &promptInstallSecret, "install-secret", "secret")

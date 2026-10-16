@@ -377,8 +377,8 @@ function connectCard(sess, step) {
       render();
     } catch (err) {
       if (err.body && err.body.install_secret) {
-        dialog({ title: "Save this access key now", intro: "storage.bd created the backup space, but this machine couldn't save it. The secret key below is shown only once.",
-          body: h("pre", { class: "muted-box mono break" }, "Space ID:       " + err.body.tenant_id + "\nAccess key ID:  " + err.body.install_id + "\nSecret key:     " + err.body.install_secret) });
+        dialog({ title: "Save this space access key now", intro: "storage.bd created the backup space, but this machine couldn't save it. The space secret key below is shown only once.",
+          body: h("pre", { class: "muted-box mono break" }, "Space ID:       " + err.body.tenant_id + "\nSpace access key ID:  " + err.body.install_id + "\nSpace secret key:     " + err.body.install_secret) });
       } else fail(err);
     } finally { btn.disabled = false; }
   });
@@ -389,7 +389,7 @@ function connectCard(sess, step) {
 }
 
 // A space created with "New backup space" in the storage.bd dashboard,
-// which shows its Space ID, Access key ID and Secret key once. Same as
+// which shows its Space ID, Space access key ID and Space secret key once. Same as
 // `storagebd credential add`; no sign-in needed.
 function addExistingCard(sess) {
   const taken = app.state.credentials.some((c) => c.name === app.state.default_name);
@@ -408,8 +408,8 @@ function addExistingCard(sess) {
   const form = h("form", {},
     field("Name on this machine", name, "Used in commands, for example: storagebd backup " + (name.value || "NAME")),
     field("Space ID", tenant),
-    field("Access key ID", install),
-    field("Secret key", secret, "Shown once in the dashboard. If you've lost it, issue a new one there."),
+    field("Space access key ID", install, "Belongs to this one backup space. It is not a reseller API client ID."),
+    field("Space secret key", secret, "Shown once in the dashboard. If you've lost it, issue a new one there."),
     h("label", { class: "check mt-14" }, used, "This space already has backups from another machine"),
     passField,
     h("details", { class: "mt-14" }, h("summary", { class: "soft small" }, "Advanced"),

@@ -7,12 +7,11 @@
 | In code / API | Shown to users |
 |---|---|
 | tenant (`tenant_id`), repo | backup space (Space ID) |
-| install (`install_id`, `install_secret`) | access key (Access key ID, Secret key) |
+| install (`install_id`, `install_secret`) | access key (Space access key ID, Space secret key) |
 | restic password | encryption password |
 | `grace` / `purged` state | Over limit / Deleted |
 
 `--json` output keeps the API field names. The pre-rename flags (`--tenant-id`, `--install-id`, `--install-secret[-file]`) stay as hidden aliases (`legacyFlag` in `internal/cli/credential.go`).
-
 
 ## Decisions (2026-10-10)
 

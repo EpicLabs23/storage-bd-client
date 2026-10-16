@@ -175,7 +175,6 @@ func newAccountCmd(a *app) *cobra.Command {
 				}
 				state += " (" + reason + ")"
 			}
-
 			renews := "-"
 			if t.State == "active" || t.State == "grace" {
 				renews = t.NextBillingAt.Local().Format(time.DateOnly)
@@ -249,10 +248,10 @@ Requires: storagebd login`,
 		})
 		var orphan *account.OrphanError
 		if errors.As(err, &orphan) {
-			// The secret key can't be fetched again; this is the only
+			// The space secret key can't be fetched again; this is the only
 			// chance to keep it. stderr, so it isn't piped onward by accident.
-			fmt.Fprintf(os.Stderr, "\nSave these now; the secret key cannot be shown again:\n"+
-				"  Space ID:       %s\n  Access key ID:  %s\n  Secret key:     %s\n"+
+			fmt.Fprintf(os.Stderr, "\nSave these now; the space secret key cannot be shown again:\n"+
+				"  Space ID:       %s\n  Space access key ID:  %s\n  Space secret key:     %s\n"+
 				"Then add it with: storagebd credential add <name> --space-id %s --key-id %s\n\n",
 				orphan.TenantID, orphan.InstallID, orphan.InstallSecret, orphan.TenantID, orphan.InstallID)
 			return err

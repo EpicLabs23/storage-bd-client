@@ -6,8 +6,8 @@ storagebd now uses the same words as the storage.bd dashboard:
 |---|---|
 | tenant / repo | backup space |
 | Tenant ID | Space ID |
-| Install ID | Access key ID |
-| Install secret | Secret key |
+| Install ID | Space access key ID |
+| Install secret | Space secret key |
 | restic password | encryption password |
 
 New flag names:

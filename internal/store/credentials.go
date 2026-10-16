@@ -85,7 +85,7 @@ func ValidateUUID(field, v string) error {
 
 func ValidateInstallSecret(v string) error {
 	if len(v) < 32 || len(v) > 256 || strings.ContainsAny(v, " \t\r\n") {
-		return errors.New("secret key looks malformed (expected the long hex string shown once at creation)")
+		return errors.New("space secret key looks malformed (expected the long hex string shown once at creation)")
 	}
 	return nil
 }
@@ -120,8 +120,7 @@ func (c *Credential) validate() error {
 	if err := ValidateUUID("Space ID", c.TenantID); err != nil {
 		return err
 	}
-	if err := ValidateUUID("Access key ID", c.InstallID); err != nil {
-
+	if err := ValidateUUID("Space access key ID", c.InstallID); err != nil {
 		return err
 	}
 	if err := ValidateInstallSecret(c.InstallSecret); err != nil {
