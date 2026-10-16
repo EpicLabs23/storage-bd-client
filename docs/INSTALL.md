@@ -63,7 +63,7 @@ loginctl enable-linger "$USER"
 ## Install a specific version
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo STORAGEBD_VERSION=v0.1.0 sh
+curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo STORAGEBD_VERSION=v0.1.2 sh
 ```
 
 ## Manual install
@@ -73,8 +73,8 @@ curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/g
    ```sh
    minisign -V -p storagebd-release.pub -m SHA256SUMS
    sha256sum -c --ignore-missing SHA256SUMS
-   tar xzf storagebd_v0.1.0_linux_amd64.tar.gz
-   cd storagebd_v0.1.0_linux_amd64
+   tar xzf storagebd_v0.1.2_linux_amd64.tar.gz
+   cd storagebd_v0.1.2_linux_amd64
    ```
 3. Install:
    ```sh
