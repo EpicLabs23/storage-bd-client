@@ -666,8 +666,9 @@ async function restoreView(main) {
   main.append(pageHead("Snapshots & restore", "Browse what's been backed up and bring it back."));
   const filter = h("select", { "aria-label": "Filter by source" }, h("option", { value: "" }, "All sources"));
   const listBox = h("div", {}, loading("Reading snapshots from storage.bd…"));
-  const detail = h("div", {});
-  main.append(h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "Snapshots"), filter), listBox), detail);
+  const detail = h("div", { class: "split-detail" });
+  const split = h("div", { class: "split" }, h("div", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "Snapshots"), filter), listBox), detail);
+  main.append(split);
 
   let snaps = [], srcMap = {};
   try {
@@ -679,7 +680,7 @@ async function restoreView(main) {
   } catch (e) { clear(listBox).append(h("div", { class: "banner bad" }, icon("alert"), e.message)); return; }
 
   const draw = () => {
-    clear(listBox);
+    clear(listBox); clear(detail); split.classList.remove("open");
     const shown = snaps.filter((s) => !filter.value || s.source === filter.value);
     if (!shown.length) { listBox.append(emptyState("history", "No snapshots yet", "Run a backup and its snapshots will appear here.")); return; }
     const list = h("div", { class: "list" });
@@ -690,7 +691,7 @@ async function restoreView(main) {
         h("div", { class: "icon-tile" + (isDB ? " db" : "") }, icon(isDB ? "db" : "folder")),
         h("div", { class: "grow" }, h("div", { class: "title" }, (s.source || "untagged") + " · " + when(s.time)), h("div", { class: "sub mono" }, s.short_id + "  ·  " + (s.paths || []).join(" "))),
         icon("chevron"));
-      const open = () => { list.querySelectorAll(".selected").forEach((x) => x.classList.remove("selected")); row.classList.add("selected"); showSnapshot(c, s, src, isDB, detail); };
+      const open = () => { list.querySelectorAll(".selected").forEach((x) => x.classList.remove("selected")); row.classList.add("selected"); split.classList.add("open"); showSnapshot(c, s, src, isDB, detail); if (window.matchMedia("(max-width: 1100px)").matches) detail.scrollIntoView({ behavior: "smooth", block: "start" }); };
       row.addEventListener("click", open);
       row.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
       list.append(row);
