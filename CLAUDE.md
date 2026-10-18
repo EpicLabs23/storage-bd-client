@@ -18,7 +18,7 @@ scripts/it-dbs.sh                           # real MariaDB/MySQL/Postgres round 
 
 # UI against the fake storage.bd (login password: demo-password)
 go run ./internal/testutil/cmd/fakestorage            # prints its URL
-make build API_URL=<that URL> && ./bin/storagebd --home /tmp/sbui serve
+make build API_URL=<that URL> && ./bin/storagebd --home /tmp/sbui user add admin && ./bin/storagebd --home /tmp/sbui serve
 ./bin/storagebd --home /tmp/sbtest credential list
 ./bin/storagebd --home /tmp/sbtest login --api-url http://localhost:3010   # a local storage.bd API
 ```
@@ -37,7 +37,8 @@ make build API_URL=<that URL> && ./bin/storagebd --home /tmp/sbui serve
 - `internal/jobs` — backup/restore runs under the per-credential job lock, job history, progress events
 - `internal/execsafe` — binary ownership/permission checks shared by restic and DB tools
 - `internal/update` — `storagebd upgrade`: minisign verification against the embedded `keys/*.pub`, release download + safe unpack
-- `internal/server` — `serve`: loopback web UI (embedded `web/`), JSON API, SSE events, background jobs, scheduler
+- `internal/uiauth` — web UI password hashing (argon2id) and checks
+- `internal/server` — `serve`: loopback web UI (username/password sign-in, `auth.go`) (embedded `web/`), JSON API, SSE events, background jobs, scheduler
 - `internal/testutil` — fake storage.bd (account endpoints, tokens, escrow, restic REST repo with S3-style redirects) for tests; `cmd/fakestorage` runs it standalone
 
 ## Rules

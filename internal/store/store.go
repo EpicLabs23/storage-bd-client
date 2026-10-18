@@ -167,6 +167,32 @@ var migrations = []string{
 		last_prune_at       TEXT,
 		updated_at          TEXT NOT NULL
 	);`,
+
+	// 7: web UI users and their sign-in sessions. Users are created only
+	// from the terminal (`storagebd user add`), so reaching the page never
+	// lets anyone claim it. password_hash is argon2id (internal/uiauth).
+	// The totp_* columns hold the user's 2FA. Sessions are stored by the
+	// SHA-256 of the cookie value, never the value itself.
+	`CREATE TABLE ui_users (
+		id                  INTEGER PRIMARY KEY,
+		username            TEXT NOT NULL UNIQUE,
+		password_hash       TEXT NOT NULL,
+		totp_secret         TEXT NOT NULL DEFAULT '',
+		totp_enabled        INTEGER NOT NULL DEFAULT 0,
+		totp_backup_codes   TEXT NOT NULL DEFAULT '[]',
+		created_at          TEXT NOT NULL,
+		updated_at          TEXT NOT NULL
+	);
+	CREATE TABLE ui_sessions (
+		token_hash   TEXT PRIMARY KEY,
+		user_id      INTEGER NOT NULL REFERENCES ui_users(id) ON DELETE CASCADE,
+		created_at   TEXT NOT NULL,
+		last_seen_at TEXT NOT NULL,
+		expires_at   TEXT NOT NULL,
+		remote_addr  TEXT NOT NULL DEFAULT '',
+		user_agent   TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX ui_sessions_by_user ON ui_sessions(user_id);`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

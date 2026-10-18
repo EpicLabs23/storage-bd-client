@@ -18,13 +18,13 @@ func newServeCmd(a *app) *cobra.Command {
 		Short: "Run the local web UI and the backup scheduler",
 		Long: `Run the storage.bd backup web UI and the backup scheduler.
 
-The UI listens on loopback only and needs a private login link, which is
-printed at startup and changes on every start. Get it again any time with:
+Sign in to the page with a user created in the terminal:
 
-  storagebd ui-url
+  storagebd user add admin
 
-On a remote server, run this on your own computer (not the server) to open
-an SSH tunnel, then open the link in your computer's browser:
+The page listens on this machine only. On a remote server, run this on
+your own computer (not the server) to open an SSH tunnel, then open
+http://127.0.0.1:7878 in your computer's browser:
 
   ssh -i ~/.ssh/id_ed25519 -N -L 7878:127.0.0.1:7878 you@your-server
 
@@ -49,9 +49,15 @@ service to keep them going.`,
 				DefaultAPIURL: DefaultAPIURL,
 				Version:       Version,
 			}
+			n, err := runner.Store.CountUIUsers(cmd.Context())
+			if err != nil {
+				return err
+			}
 			return s.Run(cmd.Context(), addr, func(url string) {
-				fmt.Fprintf(os.Stderr, "storagebd UI is running. Open this private link in your browser:\n\n  %s\n\n"+
-					"(Get it again with: storagebd ui-url. Stop with Ctrl-C.)\n", url)
+				fmt.Fprintf(os.Stderr, "storagebd UI is running at %s (stop with Ctrl-C)\n", url)
+				if n == 0 {
+					fmt.Fprintln(os.Stderr, "No users yet. Create one to sign in: storagebd user add admin")
+				}
 			})
 		},
 	}
@@ -62,7 +68,7 @@ service to keep them going.`,
 func newUIURLCmd(a *app) *cobra.Command {
 	return &cobra.Command{
 		Use:   "ui-url",
-		Short: "Print the private login link of the running web UI",
+		Short: "Print the address of the running web UI",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := a.openStore(); err != nil {

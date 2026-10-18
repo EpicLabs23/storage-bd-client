@@ -123,7 +123,7 @@ async function api(method, path, body) {
   let data = null;
   const text = await res.text();
   if (text) { try { data = JSON.parse(text); } catch { data = { error: text }; } }
-  if (res.status === 401 && data && /ui-url/.test(data.error || "")) { location.reload(); }
+  if (res.status === 401 && data && data.code === "signin_required") { signedOut(); }
   if (!res.ok) throw new ApiError(res.status, data || {});
   return data;
 }
@@ -230,6 +230,9 @@ async function refresh() {
 }
 
 function renderChrome() {
+  const out = document.getElementById("signout");
+  out.hidden = false;
+  out.title = "Signed in to this page as " + app.state.ui_user;
   const host = document.getElementById("host-chip");
   host.hidden = false;
   clear(host).append(icon("server"), app.state.hostname || "this machine");
@@ -1009,6 +1012,14 @@ async function settings(main) {
   main.append(pageHead("Settings"));
   const c = currentCred();
 
+  // this page's sign-in
+  main.append(h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "Sign-in to this page")),
+    h("div", { class: "btn-row" }, h("span", {}, "Signed in as ", h("strong", {}, app.state.ui_user)),
+      h("button", { class: "btn sm ml-auto", type: "button", onclick: changePasswordDialog }, "Change password"),
+      h("button", { class: "btn sm", type: "button", onclick: signOut }, "Sign out")),
+    h("p", { class: "small soft mt-8" }, "Add or remove users on the server: ", h("code", {}, "storagebd user --help"))));
+
   // account
   const sess = sessionFor(c.api_url);
   main.append(h("div", { class: "card" },
@@ -1111,18 +1122,111 @@ function connectEvents() {
     else if (e.type === "job-start" && app.view === "overview") render();
   };
   es.onerror = () => { /* EventSource reconnects by itself */ };
+  return es;
+}
+
+// ---------- sign-in to this page ----------
+// Users come from `storagebd user add` on the server; the page can't
+// create them, so reaching it never lets anyone claim it.
+function signinShell(card) {
+  for (const id of ["signout", "host-chip", "account-chip"]) document.getElementById(id).hidden = true;
+  clear(root()).append(h("div", { class: "onboard" }, card));
+}
+
+function setupCard() {
+  return h("div", { class: "card" },
+    h("h1", {}, "Create a user to sign in"),
+    h("p", { class: "soft mt-8" }, "No one can sign in to this backup page yet. Create the first user on the server, in a terminal:"),
+    h("p", { class: "muted-box mono mt-14" }, "sudo storagebd user add admin"),
+    h("p", { class: "soft small mt-14" }, "It asks for a password. Then reload this page and sign in."),
+    h("div", { class: "btn-row mt-20" }, h("button", { class: "btn primary", type: "button", onclick: () => location.reload() }, "Reload")));
+}
+
+function signinCard() {
+  const user = input({ autocomplete: "username", required: true, autocapitalize: "none" });
+  const pass = input({ type: "password", autocomplete: "current-password", required: true });
+  const btn = h("button", { class: "btn primary lg", type: "submit" }, "Sign in");
+  const err = h("div", { class: "banner bad mt-14", role: "alert", hidden: true });
+  const form = h("form", {}, field("Username", user), field("Password", pass), err, h("div", { class: "btn-row mt-20" }, btn));
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    err.hidden = true;
+    try {
+      await api("POST", "/api/ui/login", { username: user.value, password: pass.value });
+      pass.value = "";
+      startApp();
+    } catch (e2) {
+      clear(err).append(icon("alert"), e2.message);
+      err.hidden = false;
+      pass.select();
+    } finally { btn.disabled = false; }
+  });
+  setTimeout(() => user.focus(), 0);
+  return h("div", { class: "card" },
+    h("h1", {}, "Sign in"),
+    h("p", { class: "soft mt-4" }, "Sign in to manage backups on this machine."),
+    h("div", { class: "mt-20" }, form),
+    h("p", { class: "soft small mt-20" }, "Forgot the password? On the server, run ", h("code", {}, "sudo storagebd user passwd <username>"), "."));
+}
+
+let appStarted = false;
+let pollTimer = null;
+let events = null;
+
+// signedOut runs when any API call reports the session is gone (expired,
+// signed out elsewhere, user removed).
+function signedOut() {
+  if (!appStarted) return;
+  appStarted = false;
+  clearInterval(pollTimer);
+  if (events) events.close();
+  closeDialogs();
+  signinShell(signinCard());
+}
+
+async function signOut() {
+  try { await api("POST", "/api/ui/logout", {}); } catch {}
+  signedOut();
+  if (!document.querySelector("form")) signinShell(signinCard());
+}
+
+function changePasswordDialog() {
+  const cur = input({ type: "password", autocomplete: "current-password" });
+  const nw = input({ type: "password", autocomplete: "new-password", minlength: "12" });
+  const again = input({ type: "password", autocomplete: "new-password" });
+  dialog({
+    title: "Change your password",
+    intro: "Other browsers signed in as " + app.state.ui_user + " are signed out.",
+    body: h("div", {}, field("Current password", cur), field("New password", nw, "At least 12 characters."), field("Repeat new password", again)),
+    actions: [{ label: "Change password", onClick: async () => {
+      if (nw.value !== again.value) { toast("The new passwords don't match.", "bad"); return false; }
+      await api("POST", "/api/ui/password", { current_password: cur.value, new_password: nw.value });
+      toast("Password changed.", "ok");
+    } }],
+  });
+}
+
+async function startApp() {
+  appStarted = true;
+  await refresh();
+  render();
+  events = connectEvents();
+  pollTimer = setInterval(() => { refresh().then(() => { if (app.view === "overview" && !document.querySelector("dialog")) render(); }).catch(() => {}); }, 60000);
 }
 
 // ---------- boot ----------
 (async function boot() {
   const v = (location.hash || "").slice(1);
   if (VIEWS.some(([id]) => id === v)) app.view = v;
+  document.getElementById("signout").addEventListener("click", signOut);
   try {
-    await refresh();
-    render();
-    connectEvents();
-    setInterval(() => { refresh().then(() => { if (app.view === "overview" && !document.querySelector("dialog")) render(); }).catch(() => {}); }, 60000);
+    const st = await api("GET", "/api/ui/status");
+    if (st.setup_required) { signinShell(setupCard()); return; }
+    if (!st.signed_in) { signinShell(signinCard()); return; }
+    await startApp();
   } catch (e) {
+    if (!appStarted && e.status === 401) return;
     clear(root()).append(h("div", { class: "onboard" }, h("div", { class: "banner bad" }, icon("alert"), e.message)));
   }
 })();

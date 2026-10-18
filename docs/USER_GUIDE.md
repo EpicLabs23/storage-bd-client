@@ -38,7 +38,7 @@ Under the hood, storagebd runs [restic](https://restic.net). Only data that chan
 
 ## 1. Connect this machine
 
-**Web page:** open the link from `sudo storagebd ui-url`, sign in with your storage.bd email and password, then fill in **Create a backup space for this machine**:
+**Web page:** open the backup page (`http://127.0.0.1:7878`; see [Open the backup page](INSTALL.md#open-the-backup-page)) and sign in with the user you created at install. Then sign in with your storage.bd email and password, and fill in **Create a backup space for this machine**:
 
 - **Name on this machine**: a short name used in commands (default: the hostname).
 - **Label**: how the space appears in your storage.bd dashboard.
@@ -325,7 +325,7 @@ storagebd refuses to run a program that other users could have replaced (one tha
 
 ## Security notes
 
-- The web page listens on `127.0.0.1` only, and opens only through the private link from `storagebd ui-url`. The link changes every time the service restarts. Anyone who can run `sudo storagebd ui-url` can use the page, and the page can restore files anywhere on the machine, so treat the link like a root password.
+- The web page listens on `127.0.0.1` only, and needs a username and password. Users can only be created on the server (`sudo storagebd user add`), so reaching the page isn't enough to use it. The page can restore files anywhere on the machine, so give its users strong passwords and treat them like root passwords.
 - Settings, credentials and database passwords are stored in `/var/lib/storagebd` (root only, mode 0700). storagebd refuses to start if that folder is readable by others.
 - Data is encrypted on this machine before upload. storage.bd stores encrypted data only.
 - Database and storage.bd passwords never appear on command lines or in the environment of the programs storagebd runs.
@@ -348,7 +348,7 @@ storagebd refuses to run a program that other users could have replaced (one tha
 
 **"…MariaDB's dump tool talking to a MySQL server"**: see *Tool versions* in [Databases: setting up a backup user](#databases-setting-up-a-backup-user).
 
-**The web page says "Open this page from your terminal"**: the link changed (the service restarted). Run `sudo storagebd ui-url` again.
+**The web page says "Create a user to sign in"**: no user exists yet. Run `sudo storagebd user add admin`, then reload. Forgot the password: `sudo storagebd user passwd admin`.
 
 **Scheduled backups don't run**: check that the service is running (`systemctl status storagebd`) and that a schedule is saved (*Schedule & cleanup*). For `--user` installs, run `loginctl enable-linger $USER`.
 
@@ -374,7 +374,8 @@ Run `storagebd <command> --help` for every option. Commands act on the default b
 | `repo init\|status [NAME]` | Prepare / check the repository behind a space |
 | `settings list\|set\|unset` | Program paths |
 | `serve` | Run the web page and scheduler (the service does this) |
-| `ui-url` | Print the web page's private link |
+| `ui-url` | Print the web page's address |
+| `user add\|list\|passwd\|signout\|remove` | Who can sign in to the web page |
 | `upgrade` | Install the latest signed release (`--check` to only look) |
 | `version` | storagebd and restic versions |
 | `completion bash\|zsh\|fish` | Shell completion script |

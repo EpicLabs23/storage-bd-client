@@ -37,7 +37,7 @@ if [ "$MODE" = system ]; then
   UNIT_SRC=storagebd.service
   DATA=/var/lib/storagebd
   SYSTEMCTL="systemctl"
-  UI_URL_CMD="sudo storagebd ui-url"
+  SUDO="sudo "
 else
   [ "$(id -u)" != 0 ] || die "--user is for a regular user; as root, run without --user"
   PREFIX="$HOME/.local"
@@ -45,7 +45,7 @@ else
   UNIT_SRC=storagebd-user.service
   DATA="${XDG_DATA_HOME:-$HOME/.local/share}/storagebd"
   SYSTEMCTL="systemctl --user"
-  UI_URL_CMD="storagebd ui-url"
+  SUDO=""
 fi
 BIN="$PREFIX/bin/storagebd"
 LIBDIR="$PREFIX/lib/storagebd"
@@ -123,6 +123,17 @@ chmod 0700 "$DATA"
 say "Installed $("$BIN" version | head -1)"
 "$BIN" version | sed -n '2p'
 
+# The backup page has no users until one is created here, on the server,
+# so whoever reaches the page first can't claim it. Ask now if there's a
+# terminal (/dev/tty also works under `curl ... | sudo sh`).
+NEED_USER=0
+if "$BIN" --home "$DATA" user list 2>/dev/null | grep -q '^No users'; then NEED_USER=1; fi
+if [ "$NEED_USER" = 1 ] && { : </dev/tty; } 2>/dev/null; then
+  say ""
+  say "Create the user you'll sign in to the backup page with (username: admin)."
+  if "$BIN" --home "$DATA" user add admin </dev/tty; then NEED_USER=0; fi
+fi
+
 if [ "$START" = 1 ] && have_systemd; then
   $SYSTEMCTL daemon-reload
   if $SYSTEMCTL is-active --quiet storagebd.service; then
@@ -130,18 +141,18 @@ if [ "$START" = 1 ] && have_systemd; then
   else
     $SYSTEMCTL enable --now storagebd.service
   fi
-  # Give it a moment to write its login link.
-  i=0
-  while [ $i -lt 20 ] && [ ! -f "$DATA/serve.json" ]; do sleep 0.25; i=$((i+1)); done
   say ""
-  say "storagebd is running. Open the backup panel with the link from:"
-  say "  $UI_URL_CMD"
+  say "storagebd is running. The backup page is at http://127.0.0.1:7878 on this machine."
+  say "On a remote server, tunnel to it from your own computer: ssh -N -L 7878:127.0.0.1:7878 you@this-server"
   [ "$MODE" = user ] && say "To keep backups running while you're logged out: loginctl enable-linger $(id -un)"
 else
   say ""
   if [ "$START" = 1 ]; then say "systemd isn't available here, so nothing was started."; fi
   say "Start the backup panel and scheduler with:"
   if [ "$MODE" = system ]; then say "  sudo $BIN serve"; else say "  $BIN serve"; fi
+fi
+if [ "$NEED_USER" = 1 ]; then
+  say "Before signing in, create a user: ${SUDO}storagebd user add admin"
 fi
 case ":$PATH:" in *":$PREFIX/bin:"*) ;; *) say "Note: $PREFIX/bin is not on your PATH." ;; esac
 say "Guide: https://github.com/EpicLabs23/storage-bd-client/blob/main/docs/USER_GUIDE.md"

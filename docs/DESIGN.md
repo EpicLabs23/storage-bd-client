@@ -78,7 +78,10 @@ Each module is built and then paused for review.
 - `storagebd serve [--listen 127.0.0.1:7878]`: an HTTP server in `internal/server` with the UI embedded (`web/`, vanilla JS + CSS, no build step, storage.bd brand tokens and logos copied from storage-bd-ui) and a JSON API that reuses the same `account`/`repo`/`jobs` code as the CLI.
 - **Access control** (the UI can restore to any path, often as root):
   - Loopback addresses only; `--listen` refuses anything else. Remote access is through an SSH tunnel.
-  - A random 256-bit token is generated on each start. It's printed as `/auth?t=…` and written to `<data>/serve.json` (0600) for `storagebd ui-url`. Visiting that link exchanges it for an HttpOnly, SameSite=Strict cookie and redirects, so the token leaves the address bar.
+  - Username + password sign-in (`internal/server/auth.go`, migration 7). Users are created only from the terminal (`storagebd user add`), never from the page, so reaching the page first doesn't let anyone claim it; the installer asks for the first user's password. Passwords are argon2id (`internal/uiauth`, 64 MiB, t=3) with a minimum length of 12 and no composition rules. An unknown username costs the same hash time as a wrong password.
+  - Sessions are server-side (`ui_sessions`), keyed by the SHA-256 of a random 256-bit cookie value (HttpOnly, SameSite=Strict, Secure under TLS). 12 h idle, 7 days absolute. Changing a password signs out the user's other sessions; `storagebd user passwd|signout|remove` sign out all of them.
+  - Failed sign-ins are rate limited in memory: 5 per username+address and 20 per address in 15 minutes. Not per username alone, so a remote guesser can't lock the real admin out by naming them. Sign-ins and failures are logged.
+  - This replaced v0.1's per-start token link (`/auth?t=…`), which had to be fetched with `storagebd ui-url` after every restart. `ui-url` now just prints the address.
   - `Host` must be a loopback name (blocks DNS rebinding), with any port so SSH tunnels work.
   - Non-GET API calls need an `X-Storagebd: 1` header and a same-origin `Origin` (blocks CSRF). JSON bodies are capped at 1 MB and unknown fields are rejected.
   - Strict CSP (`script-src 'self'`, no inline styles or scripts, `frame-ancestors 'none'`) plus nosniff, no-referrer and COOP/CORP headers.

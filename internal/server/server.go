@@ -2,14 +2,13 @@
 // and the backup scheduler.
 //
 // Security model. The UI can restore files to any path and read/write
-// this machine's credentials, and storagebd often runs as root, so it's
-// guarded against every local and browser-borne caller, not just the
-// network:
-//   - Listens on loopback only. Remote use is via an SSH tunnel.
-//   - A random token, regenerated on every start, is required. It's
-//     printed as a login URL and stored in <data>/serve.json (0600) for
-//     `storagebd ui-url`. Visiting the URL swaps it for an HttpOnly,
-//     SameSite=Strict cookie.
+// this machine's credentials, and storagebd often runs as root, so:
+//   - Sign-in is a username and password (auth.go). Users are created
+//     only from the terminal (`storagebd user add`), so whoever reaches
+//     the page first can't claim it. Failed sign-ins are rate limited.
+//   - The session lives server-side; the browser holds an opaque,
+//     HttpOnly, SameSite=Strict cookie.
+//   - Listens on loopback only (remote use is via an SSH tunnel).
 //   - Host must be a loopback name (DNS-rebinding defense). Mutating
 //     requests need a custom header and a matching Origin (CSRF defense).
 //   - Strict CSP and frame-ancestors 'none' (no inline script, no
@@ -18,10 +17,7 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/subtle"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,16 +54,15 @@ type Server struct {
 	DefaultAPIURL string
 	Version       string
 
-	token string
 	hub   *hub
 	jobs  *jobManager
+	fails *failures
 }
 
 // ServeState is what `storagebd ui-url` reads.
 type ServeState struct {
-	URL   string `json:"url"`
-	Token string `json:"token"`
-	PID   int    `json:"pid"`
+	URL string `json:"url"`
+	PID int    `json:"pid"`
 }
 
 // ValidateListenAddr accepts only loopback IP addresses.
@@ -83,25 +78,21 @@ func ValidateListenAddr(addr string) error {
 	return nil
 }
 
-// Run serves until ctx is cancelled. onReady receives the login URL.
-func (s *Server) Run(ctx context.Context, addr string, onReady func(loginURL string)) error {
+// Run serves until ctx is cancelled. onReady receives the page's URL.
+func (s *Server) Run(ctx context.Context, addr string, onReady func(pageURL string)) error {
 	if err := ValidateListenAddr(addr); err != nil {
 		return err
 	}
-	tok := make([]byte, 32)
-	if _, err := rand.Read(tok); err != nil {
-		return err
-	}
-	s.token = hex.EncodeToString(tok)
 	s.hub = newHub()
 	s.jobs = newJobManager(s)
+	s.fails = newFailures()
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	loginURL := fmt.Sprintf("http://%s/auth?t=%s", ln.Addr().String(), s.token)
-	if err := s.writeState(ServeState{URL: loginURL, Token: s.token, PID: os.Getpid()}); err != nil {
+	pageURL := fmt.Sprintf("http://%s/", ln.Addr().String())
+	if err := s.writeState(ServeState{URL: pageURL, PID: os.Getpid()}); err != nil {
 		ln.Close()
 		return err
 	}
@@ -120,9 +111,10 @@ func (s *Server) Run(ctx context.Context, addr string, onReady func(loginURL str
 		srv.Shutdown(shutdownCtx)
 	}()
 	go s.runScheduler(ctx)
+	go s.sweepSessions(ctx)
 
 	if onReady != nil {
-		onReady(loginURL)
+		onReady(pageURL)
 	}
 	err = srv.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -171,11 +163,6 @@ func isLoopbackHost(hostport string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func (s *Server) authed(r *http.Request) bool {
-	c, err := r.Cookie(cookieName)
-	return err == nil && subtle.ConstantTimeCompare([]byte(c.Value), []byte(s.token)) == 1
-}
-
 func securityHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "+
@@ -191,6 +178,7 @@ func (s *Server) routes() http.Handler {
 	static, _ := fs.Sub(webFS, "web")
 	files := http.FileServer(http.FS(static))
 	api := s.apiRoutes()
+	ui := s.uiRoutes()
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		securityHeaders(w)
@@ -198,52 +186,42 @@ func (s *Server) routes() http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
-
-		switch {
-		case r.URL.Path == "/auth":
-			s.handleAuth(w, r)
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			// Static assets only; the page itself asks /api/ui/status
+			// whether to show the sign-in form.
+			files.ServeHTTP(w, r)
 			return
-		case strings.HasPrefix(r.URL.Path, "/api/"):
-			w.Header().Set("Cache-Control", "no-store")
-			if !s.authed(r) {
-				writeErr(w, http.StatusUnauthorized, "not signed in to this UI; open the link from: storagebd ui-url")
+		}
+
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if r.Header.Get(csrfHeader) != "1" {
+				writeErr(w, http.StatusForbidden, "missing request header")
 				return
 			}
-			if r.Method != http.MethodGet && r.Method != http.MethodHead {
-				if r.Header.Get(csrfHeader) != "1" {
-					writeErr(w, http.StatusForbidden, "missing request header")
-					return
-				}
-				if o := r.Header.Get("Origin"); o != "" && o != "http://"+r.Host {
-					writeErr(w, http.StatusForbidden, "cross-origin request refused")
-					return
-				}
-			}
-			api.ServeHTTP(w, r)
-			return
-		case r.URL.Path == "/" || r.URL.Path == "/index.html":
-			if !s.authed(r) {
-				r2 := r.Clone(r.Context())
-				r2.URL.Path = "/locked.html"
-				files.ServeHTTP(w, r2)
+			if o := r.Header.Get("Origin"); o != "" && o != pageOrigin(r) {
+				writeErr(w, http.StatusForbidden, "cross-origin request refused")
 				return
 			}
 		}
-		files.ServeHTTP(w, r)
+		if strings.HasPrefix(r.URL.Path, "/api/ui/") {
+			ui.ServeHTTP(w, r)
+			return
+		}
+		u, _ := s.currentUser(r)
+		if u == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "please sign in", "code": signinRequired})
+			return
+		}
+		api.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
 	})
 }
 
-func (s *Server) handleAuth(w http.ResponseWriter, r *http.Request) {
-	t := r.URL.Query().Get("t")
-	if subtle.ConstantTimeCompare([]byte(t), []byte(s.token)) != 1 {
-		http.Error(w, "invalid or expired link; get a fresh one with: storagebd ui-url", http.StatusUnauthorized)
-		return
+func pageOrigin(r *http.Request) string {
+	if r.TLS != nil {
+		return "https://" + r.Host
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: s.token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode,
-	})
-	// Redirect so the token leaves the address bar and history entry.
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	return "http://" + r.Host
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

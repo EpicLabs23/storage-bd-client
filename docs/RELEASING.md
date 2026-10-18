@@ -39,7 +39,7 @@ export VERSION=v0.1.0
    make sign VERSION="$VERSION"
    ```
    This writes `dist/SHA256SUMS.minisig` with the trusted comment `storagebd $VERSION`, then checks it against the keys in `internal/update/keys/`. It refuses if the key isn't one of them, or if `dist/SHA256SUMS` is for another version. The secret key is read from `~/.minisign/storagebd-release.key`; set `STORAGEBD_SIGNING_KEY` to use another path.
-6. **Smoke-test** a tarball on a clean machine or VM: `sudo ./install.sh`, open `sudo storagebd ui-url`, run a backup, then `systemctl stop storagebd` during a backup and check the next one starts cleanly.
+6. **Smoke-test** a tarball on a clean machine or VM: `sudo ./install.sh` (it asks for the admin password), sign in at `http://127.0.0.1:7878`, run a backup, then `systemctl stop storagebd` during a backup and check the next one starts cleanly.
 7. **Publish** on GitHub with exactly these asset names, since `get.sh` and `storagebd upgrade` build their download URLs from them:
    ```sh
    gh release create "$VERSION" "dist/storagebd_${VERSION}_linux_amd64.tar.gz" "dist/storagebd_${VERSION}_linux_arm64.tar.gz" \

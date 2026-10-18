@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -20,14 +19,19 @@ import (
 	"storage-bd-client/internal/repo"
 	"storage-bd-client/internal/store"
 	"storage-bd-client/internal/testutil"
+	"storage-bd-client/internal/uiauth"
 )
 
 type harness struct {
-	base  string // http://127.0.0.1:port
-	token string
-	fake  *testutil.FakeStorage
-	srv   *Server
+	base string // http://127.0.0.1:port
+	fake *testutil.FakeStorage
+	srv  *Server
 }
+
+const (
+	testUser = "admin"
+	testPass = "correct horse battery"
+)
 
 func start(t *testing.T) *harness {
 	t.Helper()
@@ -40,6 +44,13 @@ func start(t *testing.T) *harness {
 	}
 	t.Cleanup(func() { st.Close() })
 	st.SetSetting(context.Background(), store.SettingResticPath, bin)
+	hash, err := uiauth.HashPassword(testPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUIUser(context.Background(), testUser, hash); err != nil {
+		t.Fatal(err)
+	}
 	repos := &repo.Manager{Store: st, DataDir: dir}
 	s := &Server{
 		Store: st, Accounts: &account.Manager{Store: st}, Repos: repos,
@@ -50,9 +61,9 @@ func start(t *testing.T) *harness {
 	ready := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() { done <- s.Run(ctx, "127.0.0.1:0", func(u string) { ready <- u }) }()
-	var login string
+	var page string
 	select {
-	case login = <-ready:
+	case page = <-ready:
 	case err := <-done:
 		t.Fatal(err)
 	}
@@ -60,20 +71,18 @@ func start(t *testing.T) *harness {
 		cancel()
 		<-done
 	})
-	u, _ := url.Parse(login)
-	return &harness{base: "http://" + u.Host, token: u.Query().Get("t"), fake: fake, srv: s}
+	u, _ := url.Parse(page)
+	return &harness{base: "http://" + u.Host, fake: fake, srv: s}
 }
 
+// client returns an HTTP client signed in as testUser.
 func (hs *harness) client(t *testing.T) *http.Client {
+	t.Helper()
 	jar, _ := cookiejar.New(nil)
 	c := &http.Client{Jar: jar, Timeout: 60 * time.Second}
-	resp, err := c.Get(hs.base + "/auth?t=" + hs.token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.Request.URL.Path != "/" {
-		t.Fatalf("auth did not redirect to /: %s", resp.Request.URL)
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, testUser, testPass)
+	if code, out := call(t, c, "POST", hs.base+"/api/ui/login", body, csrf); code != 200 {
+		t.Fatalf("ui login: %d %v", code, out)
 	}
 	return c
 }
@@ -107,28 +116,45 @@ func TestAuthAndRequestHardening(t *testing.T) {
 	hs := start(t)
 	anon := &http.Client{}
 
-	// No cookie: API refused, index shows the locked page.
-	if code, _ := call(t, anon, "GET", hs.base+"/api/state", "", nil); code != 401 {
-		t.Fatalf("anon state: %d", code)
+	// No session: API refused with the code the page looks for.
+	if code, out := call(t, anon, "GET", hs.base+"/api/state", "", nil); code != 401 || out["code"] != signinRequired {
+		t.Fatalf("anon state: %d %v", code, out)
+	}
+	if code, out := call(t, anon, "GET", hs.base+"/api/ui/status", "", nil); code != 200 || out["signed_in"] != false || out["setup_required"] != false {
+		t.Fatalf("anon status: %d %v", code, out)
 	}
 	resp, _ := anon.Get(hs.base + "/")
-	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(b), "storagebd ui-url") {
-		t.Fatal("anonymous index did not serve the locked page")
-	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || strings.Contains(csp, "unsafe-inline") {
 		t.Fatalf("CSP = %q", csp)
 	}
 
-	// Wrong token.
-	if r, _ := anon.Get(hs.base + "/auth?t=nope"); r.StatusCode != 401 {
-		t.Fatalf("bad token: %d", r.StatusCode)
+	// Wrong password, unknown user: same answer.
+	for _, b := range []string{`{"username":"admin","password":"wrong-password-1"}`, `{"username":"nobody","password":"wrong-password-1"}`} {
+		if code, out := call(t, anon, "POST", hs.base+"/api/ui/login", b, csrf); code != 401 || out["error"] != "wrong username or password" {
+			t.Fatalf("bad login %s: %d %v", b, code, out)
+		}
+	}
+	// Login itself needs the CSRF header (no login CSRF).
+	if code, _ := call(t, anon, "POST", hs.base+"/api/ui/login", `{"username":"admin","password":"x"}`, nil); code != 403 {
+		t.Fatalf("login without csrf header: %d", code)
 	}
 
 	c := hs.client(t)
-	if code, _ := call(t, c, "GET", hs.base+"/api/state", "", nil); code != 200 {
-		t.Fatalf("state: %d", code)
+	if code, out := call(t, c, "GET", hs.base+"/api/state", "", nil); code != 200 || out["ui_user"] != testUser {
+		t.Fatalf("state: %d %v", code, out)
+	}
+	// The cookie is HttpOnly + SameSite=Strict and isn't stored in the clear.
+	u, _ := url.Parse(hs.base)
+	ck := c.Jar.Cookies(u)
+	if len(ck) != 1 {
+		t.Fatalf("cookies: %v", ck)
+	}
+	if _, err := hs.srv.Store.GetUISession(context.Background(), ck[0].Value); err == nil {
+		t.Fatal("session stored under the raw cookie value")
+	}
+	if _, err := hs.srv.Store.GetUISession(context.Background(), hashToken(ck[0].Value)); err != nil {
+		t.Fatalf("session not stored by hash: %v", err)
 	}
 	// DNS rebinding: non-loopback Host refused even with a valid cookie.
 	if code, _ := call(t, c, "GET", hs.base+"/api/state", "", map[string]string{"Host": "evil.example:7878"}); code != 403 {
@@ -148,14 +174,76 @@ func TestAuthAndRequestHardening(t *testing.T) {
 		t.Fatalf("unknown field: %d", code)
 	}
 
-	// ui-url state file is 0600 and holds the current token.
+	// Sign out ends the session server-side.
+	if code, _ := call(t, c, "POST", hs.base+"/api/ui/logout", `{}`, csrf); code != 200 {
+		t.Fatalf("logout: %d", code)
+	}
+	if _, err := hs.srv.Store.GetUISession(context.Background(), hashToken(ck[0].Value)); err == nil {
+		t.Fatal("session survived logout")
+	}
+	replay := &http.Client{}
+	req, _ := http.NewRequest("GET", hs.base+"/api/state", nil)
+	req.AddCookie(ck[0])
+	if r, _ := replay.Do(req); r.StatusCode != 401 {
+		t.Fatalf("old cookie after logout: %d", r.StatusCode)
+	}
+
+	// ui-url state file is 0600 and holds the page address.
 	st, err := ReadState(hs.srv.DataDir)
-	if err != nil || st.Token != hs.token {
+	if err != nil || st.URL != hs.base+"/" {
 		t.Fatalf("state file: %+v %v", st, err)
 	}
 	info, _ := os.Stat(filepath.Join(hs.srv.DataDir, stateFile))
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("state file mode %o", info.Mode().Perm())
+	}
+}
+
+func TestSignInThrottleAndPasswordChange(t *testing.T) {
+	hs := start(t)
+	anon := &http.Client{}
+	bad := `{"username":"admin","password":"wrong-password-1"}`
+	for i := 0; i < failPerUser; i++ {
+		call(t, anon, "POST", hs.base+"/api/ui/login", bad, csrf)
+	}
+	// Locked now, even with the right password.
+	good := fmt.Sprintf(`{"username":%q,"password":%q}`, testUser, testPass)
+	if code, _ := call(t, anon, "POST", hs.base+"/api/ui/login", good, csrf); code != 429 {
+		t.Fatalf("after %d failures: %d", failPerUser, code)
+	}
+	hs.srv.fails.reset("u:" + testUser + "@127.0.0.1")
+	hs.srv.fails.reset("a:127.0.0.1")
+
+	a, b := hs.client(t), hs.client(t)
+	newPass := "an even longer passphrase"
+	if code, out := call(t, a, "POST", hs.base+"/api/ui/password", `{"current_password":"nope","new_password":"`+newPass+`"}`, csrf); code != 400 {
+		t.Fatalf("wrong current password: %d %v", code, out)
+	}
+	if code, out := call(t, a, "POST", hs.base+"/api/ui/password", `{"current_password":"`+testPass+`","new_password":"short"}`, csrf); code != 400 {
+		t.Fatalf("short password: %d %v", code, out)
+	}
+	if code, out := call(t, a, "POST", hs.base+"/api/ui/password", `{"current_password":"`+testPass+`","new_password":"`+newPass+`"}`, csrf); code != 200 {
+		t.Fatalf("change password: %d %v", code, out)
+	}
+	// The browser that changed it stays signed in; the other one is out.
+	if code, _ := call(t, a, "GET", hs.base+"/api/state", "", nil); code != 200 {
+		t.Fatalf("changer signed out: %d", code)
+	}
+	if code, _ := call(t, b, "GET", hs.base+"/api/state", "", nil); code != 401 {
+		t.Fatalf("other browser still signed in: %d", code)
+	}
+	if code, _ := call(t, anon, "POST", hs.base+"/api/ui/login", fmt.Sprintf(`{"username":"admin","password":%q}`, newPass), csrf); code != 200 {
+		t.Fatalf("login with new password: %d", code)
+	}
+}
+
+func TestSetupRequiredWithoutUsers(t *testing.T) {
+	hs := start(t)
+	if err := hs.srv.Store.DeleteUIUser(context.Background(), testUser); err != nil {
+		t.Fatal(err)
+	}
+	if code, out := call(t, &http.Client{}, "GET", hs.base+"/api/ui/status", "", nil); code != 200 || out["setup_required"] != true {
+		t.Fatalf("status: %d %v", code, out)
 	}
 }
 

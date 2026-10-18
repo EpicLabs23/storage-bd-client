@@ -102,29 +102,25 @@ For just the `storagebd` binary: `make build` gives `bin/storagebd`. You then ne
 
 The backup page runs on the server and listens only on `127.0.0.1:7878`, so nothing on the network can reach it. To use it from your own computer, you forward that port over SSH. This keeps the page private: only someone who can already log in to the server over SSH can reach it.
 
-### At the server itself
-
-If the server has a screen and a browser (a desktop or a laptop), run this on it:
+You sign in to the page with a username and password. The installer asks you for the `admin` user's password. Users are managed only on the server, never from the page:
 
 ```sh
-sudo storagebd ui-url        # server-wide install
-storagebd ui-url             # --user install
+sudo storagebd user add <name>      # create a user (asks for the password)
+sudo storagebd user passwd <name>   # set a new password; signs that user out everywhere
+sudo storagebd user signout <name>  # sign a user out of every browser
+sudo storagebd user list
+sudo storagebd user remove <name>
 ```
 
-Open the printed link (`http://127.0.0.1:7878/auth?t=…`) in the browser there. That's all.
+Drop the `sudo` for a `--user` install. Signing in stays valid for 12 hours of inactivity (at most 7 days). Five wrong passwords in a row lock that username out for 15 minutes from that address.
+
+### At the server itself
+
+If the server has a screen and a browser (a desktop or a laptop), open `http://127.0.0.1:7878` in the browser there and sign in. That's all.
 
 ### From your computer, for a remote server
 
-**1. On the server**, get the private link:
-
-```sh
-sudo storagebd ui-url        # server-wide install
-storagebd ui-url             # --user install
-```
-
-Copy the link it prints. It changes every time the service restarts, so get it again if it stops working.
-
-**2. On your own computer**, open a terminal (Terminal on macOS or Linux, PowerShell on Windows 10/11, which has SSH built in) and start the tunnel with your SSH key:
+**1. On your own computer**, open a terminal (Terminal on macOS or Linux, PowerShell on Windows 10/11, which has SSH built in) and start the tunnel with your SSH key:
 
 ```sh
 ssh -i ~/.ssh/id_ed25519 -N -L 7878:127.0.0.1:7878 you@your-server
@@ -139,7 +135,7 @@ ssh -i ~/.ssh/id_ed25519 -N -L 7878:127.0.0.1:7878 you@your-server
 
 The command prints nothing and doesn't return. That means the tunnel is open. Leave this window open while you use the page.
 
-**3. On your own computer**, open the link from step 1 in your browser. Press **Ctrl-C** in the tunnel window when you're done.
+**2. On your own computer**, open `http://127.0.0.1:7878` in your browser and sign in. Press **Ctrl-C** in the tunnel window when you're done.
 
 #### Variations
 
@@ -147,10 +143,10 @@ The command prints nothing and doesn't return. That means the tunnel is open. Le
   ```sh
   ssh -i ~/.ssh/id_ed25519 -p 2222 -N -L 7878:127.0.0.1:7878 you@your-server
   ```
-- **Port 7878 already used on your computer** ("bind: Address already in use"): pick another local port, then change the port in the link to match.
+- **Port 7878 already used on your computer** ("bind: Address already in use"): pick another local port and open that one.
   ```sh
   ssh -i ~/.ssh/id_ed25519 -N -L 8787:127.0.0.1:7878 you@your-server
-  # then open http://127.0.0.1:8787/auth?t=… (same t=, port 8787)
+  # then open http://127.0.0.1:8787
   ```
 - **A shortcut for next time:** add this to `~/.ssh/config` on your computer,
   ```
@@ -166,11 +162,13 @@ The command prints nothing and doesn't return. That means the tunnel is open. Le
 
 - **"Permission denied (publickey)"**: SSH didn't accept the key. Check that `-i` points at the right private key and that you can log in normally with `ssh -i ~/.ssh/id_ed25519 you@your-server`.
 - **The browser says it can't connect**: the tunnel window was closed, or the service isn't running. Check with `systemctl status storagebd` on the server.
-- **"invalid or expired link"**: the service restarted. Run `sudo storagebd ui-url` on the server again and use the new link.
+- **The page says "Create a user to sign in"**: no user exists yet (for example after `storagebd upgrade` from v0.1.3 or older). Run `sudo storagebd user add admin` on the server, then reload.
+- **Forgot the password**: `sudo storagebd user passwd <name>` on the server.
+- **"too many failed sign-ins"**: wait 15 minutes, or reset the password on the server.
 
 ### Without systemd
 
-For example in a container: start it yourself on the server with `sudo storagebd serve`. It prints the link when it starts, and stays in the foreground.
+For example in a container: start it yourself on the server with `sudo storagebd serve`. It prints the page's address when it starts, and stays in the foreground.
 
 ## Upgrade
 

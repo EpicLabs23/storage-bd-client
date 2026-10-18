@@ -12,11 +12,14 @@ Install
   sudo ./install.sh          server-wide (recommended for servers)
   ./install.sh --user        only for your user
 
-Then open the backup panel with the private link from:
-  sudo storagebd ui-url      (or: storagebd ui-url for --user installs)
+The installer asks for the password of the user you sign in with
+(admin). Add more users, or reset a password, with:
+  sudo storagebd user add <name>
+  sudo storagebd user passwd <name>
 
-On a remote server, tunnel first and open the link on your computer:
-  ssh -L 7878:127.0.0.1:7878 your-server
+Then open http://127.0.0.1:7878 and sign in. On a remote server, tunnel
+first and open that address on your computer:
+  ssh -N -L 7878:127.0.0.1:7878 your-server
 
 Everything also works from the terminal:
   storagebd login

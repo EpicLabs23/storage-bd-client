@@ -9,7 +9,7 @@ storagebd is free and open source (Apache-2.0). It builds on [restic](https://re
 - **Fast and small.** Only changed data is uploaded. Duplicate data is stored once.
 - **Schedules and cleanup.** Back up daily or every few hours, and keep e.g. 7 daily, 4 weekly and 12 monthly backups. Cleanup shows you what it would remove before it removes anything.
 - **Browse and restore.** Pick files and folders from any snapshot in the web page, then restore them to a folder or back in place. Databases restore in place or into a new database.
-- **Private by design.** The web page only listens on the machine itself, behind a one-time login link.
+- **Private by design.** The web page only listens on the machine itself, and you sign in with a username and password you create on the server.
 
 ## Install
 
@@ -19,15 +19,11 @@ storagebd is free and open source (Apache-2.0). It builds on [restic](https://re
 curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo sh
 ```
 
-The command downloads the latest release, checks it against the release's published checksums, installs it, and starts the backup service.
+The command downloads the latest release, checks it against the release's published checksums, installs it, and starts the backup service. It also asks you to choose a password for the `admin` user, which is what you sign in to the backup page with.
 
-**2. On the server**, get the private link to the backup page:
+**2. If you're sitting at the server itself**, open `http://127.0.0.1:7878` in its browser, sign in as `admin`, and you're done.
 
-```sh
-sudo storagebd ui-url
-```
-
-It prints a link like `http://127.0.0.1:7878/auth?t=…`. If you're sitting at the server itself, open that link in its browser and you're done.
+Add more users or reset a password at any time on the server: `sudo storagebd user add <name>`, `sudo storagebd user passwd <name>`.
 
 **3. On your own computer** (only if the server is remote): the backup page is never exposed to the network, so you reach it through SSH. Open a terminal on your computer (Terminal on macOS/Linux, PowerShell on Windows) and run:
 
@@ -37,7 +33,7 @@ ssh -i ~/.ssh/id_ed25519 -N -L 7878:127.0.0.1:7878 you@your-server
 
 Replace `~/.ssh/id_ed25519` with your SSH private key and `you@your-server` with the login you normally use for the server. The command prints nothing and keeps running. That's normal: leave the window open while you use the page.
 
-**4. On your own computer**, open the link from step 2 in your browser. Press Ctrl-C in the SSH window when you're done.
+**4. On your own computer**, open `http://127.0.0.1:7878` in your browser and sign in. Press Ctrl-C in the SSH window when you're done.
 
 More tunnel options (another SSH port, a busy local port, an `~/.ssh/config` shortcut) are in **[docs/INSTALL.md](docs/INSTALL.md#open-the-backup-page)**.
 

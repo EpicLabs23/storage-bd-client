@@ -212,7 +212,7 @@ func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.Version, "default_api_url": s.DefaultAPIURL, "hostname": host,
 		"default_name": account.DefaultName(), "running_as_root": os.Geteuid() == 0,
-		"credentials": views, "sessions": sessions,
+		"credentials": views, "sessions": sessions, "ui_user": userFrom(r.Context()).Username,
 	})
 }
 
