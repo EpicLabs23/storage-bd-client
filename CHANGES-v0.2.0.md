@@ -103,7 +103,7 @@ sudo storagebd upgrade           # server-wide install
 storagebd upgrade                # --user install
 ```
 
-**Then create a user to sign in with.** `storagebd upgrade` doesn't ask for one, so until you do, the page says "Create a user to sign in":
+In a terminal, the upgrade asks for the password of the `admin` user you'll sign in to the page with. If it can't ask (for example when run from a script), create the user afterwards. Until then, the page says "Create a user to sign in":
 
 ```sh
 sudo storagebd user add admin    # drop sudo for a --user install

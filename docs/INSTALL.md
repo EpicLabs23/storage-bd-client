@@ -171,7 +171,7 @@ The command prints nothing and doesn't return. That means the tunnel is open. Le
 
 - **"Permission denied (publickey)"**: SSH didn't accept the key. Check that `-i` points at the right private key and that you can log in normally with `ssh -i ~/.ssh/id_ed25519 you@your-server`.
 - **The browser says it can't connect**: the tunnel window was closed, or the service isn't running. Check with `systemctl status storagebd` on the server.
-- **The page says "Create a user to sign in"**: no user exists yet (for example after `storagebd upgrade` from v0.1.3 or older). Run `sudo storagebd user add admin` on the server, then reload.
+- **The page says "Create a user to sign in"**: no user exists yet (for example after an upgrade from v0.1.3 or older that ran without a terminal). Run `sudo storagebd user add admin` on the server, then reload.
 - **Forgot the password**: `sudo storagebd user passwd <name>` on the server.
 - **"too many failed sign-ins"**: wait 15 minutes, or reset the password on the server.
 - **"two-step sign-in is required"**: the page is open to the network. Run `sudo storagebd user 2fa enable <name>` on the server.
@@ -273,7 +273,7 @@ It downloads the latest release and installs it only if the release is signed wi
 
 If a backup is running, the service stops it cleanly first. Run it again afterwards, or let the schedule do it.
 
-**Upgrading to v0.2.0 or later from v0.1.x:** the backup page now has a username and password sign-in, and `storagebd upgrade` doesn't create a user for you. Run `sudo storagebd user add admin` once after upgrading (drop `sudo` for a `--user` install), then sign in at `http://127.0.0.1:7878`.
+**Upgrading to v0.2.0 or later from v0.1.x:** the backup page now has a username and password sign-in. In a terminal, the upgrade asks for the `admin` user's password. If it couldn't ask (for example when run from a script), run `sudo storagebd user add admin` afterwards (drop `sudo` for a `--user` install). Then sign in at `http://127.0.0.1:7878`.
 
 **From v0.1.0**, which has no `upgrade` command, run the install command once more:
 
