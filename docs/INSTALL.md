@@ -63,7 +63,7 @@ loginctl enable-linger "$USER"
 ## Install a specific version
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo STORAGEBD_VERSION=v0.1.3 sh
+curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/get.sh | sudo STORAGEBD_VERSION=v0.2.0 sh
 ```
 
 ## Manual install
@@ -73,8 +73,8 @@ curl -fsSL https://raw.githubusercontent.com/EpicLabs23/storage-bd-client/main/g
    ```sh
    minisign -V -p storagebd-release.pub -m SHA256SUMS
    sha256sum -c --ignore-missing SHA256SUMS
-   tar xzf storagebd_v0.1.3_linux_amd64.tar.gz
-   cd storagebd_v0.1.3_linux_amd64
+   tar xzf storagebd_v0.2.0_linux_amd64.tar.gz
+   cd storagebd_v0.2.0_linux_amd64
    ```
 3. Install:
    ```sh
@@ -272,6 +272,8 @@ It downloads the latest release and installs it only if the release is signed wi
 - `storagebd upgrade --version v0.2.0` installs a specific release, including an older one.
 
 If a backup is running, the service stops it cleanly first. Run it again afterwards, or let the schedule do it.
+
+**Upgrading to v0.2.0 or later from v0.1.x:** the backup page now has a username and password sign-in, and `storagebd upgrade` doesn't create a user for you. Run `sudo storagebd user add admin` once after upgrading (drop `sudo` for a `--user` install), then sign in at `http://127.0.0.1:7878`.
 
 **From v0.1.0**, which has no `upgrade` command, run the install command once more:
 
