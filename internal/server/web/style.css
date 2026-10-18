@@ -350,3 +350,10 @@ dialog .dlg-foot { padding: 12px 18px 16px; display: flex; justify-content: flex
 .ml-auto { margin-left: auto; } .ml-8 { margin-left: 8px; }
 .nowrap { white-space: nowrap; }
 .break { word-break: break-all; }
+
+/* two-step sign-in */
+.qr-wrap { display: flex; justify-content: center; }
+.qr { width: 220px; height: 220px; max-width: 100%; border-radius: 8px; background: #fff; padding: 6px; }
+.codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); user-select: all; }
+.banner.exposed { margin-bottom: 16px; align-items: flex-start; }
+.banner.exposed pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }

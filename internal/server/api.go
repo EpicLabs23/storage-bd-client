@@ -212,7 +212,7 @@ func (s *Server) getState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.Version, "default_api_url": s.DefaultAPIURL, "hostname": host,
 		"default_name": account.DefaultName(), "running_as_root": os.Geteuid() == 0,
-		"credentials": views, "sessions": sessions, "ui_user": userFrom(r.Context()).Username,
+		"credentials": views, "sessions": sessions, "ui_user": userFrom(r.Context()).Username, "ui_user_2fa": userFrom(r.Context()).TOTPEnabled, "exposed": s.exposed,
 	})
 }
 
@@ -823,6 +823,9 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []setting{}
 	for k, d := range store.KnownSettings() {
+		if store.IsTerminalOnlySetting(k) {
+			continue
+		}
 		v, _ := s.Store.GetSetting(r.Context(), k)
 		out = append(out, setting{k, v, d})
 	}
@@ -843,6 +846,10 @@ func (s *Server) putSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &b); err != nil {
 		fail(w, err)
+		return
+	}
+	if store.IsTerminalOnlySetting(b.Key) {
+		writeErr(w, http.StatusForbidden, b.Key+" can only be changed on the server: storagebd settings set "+b.Key+" …")
 		return
 	}
 	if b.Value == "" {

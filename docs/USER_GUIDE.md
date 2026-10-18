@@ -320,12 +320,18 @@ sudo storagebd settings unset mysqldump-path
 | `restic-path` | Use a different restic than the bundled one (0.14 or newer) |
 | `mysqldump-path`, `mysql-path` | MySQL/MariaDB tools (default: `mariadb-dump`/`mariadb`, then `mysqldump`/`mysql`) |
 | `pg_dump-path`, `psql-path` | PostgreSQL tools |
+| `ui-listen` | Web page address, e.g. `0.0.0.0:7878` to open it to the network (needs HTTPS) |
+| `ui-tls-cert`, `ui-tls-key` | HTTPS certificate (full chain) and key files for the web page |
+| `ui-hosts` | Host names the web page answers to, e.g. `backup.example.com` |
+
+The `ui-*` settings can only be changed in the terminal, and take effect after `sudo systemctl restart storagebd`. See [Open the page on a network port](INSTALL.md#open-the-page-on-a-network-port).
 
 storagebd refuses to run a program that other users could have replaced (one that's group- or world-writable, or owned by another non-root user).
 
 ## Security notes
 
-- The web page listens on `127.0.0.1` only, and needs a username and password. Users can only be created on the server (`sudo storagebd user add`), so reaching the page isn't enough to use it. The page can restore files anywhere on the machine, so give its users strong passwords and treat them like root passwords.
+- The web page listens on `127.0.0.1` by default, and needs a username and password. Users can only be created on the server (`sudo storagebd user add`), so reaching the page isn't enough to use it. The page can restore files anywhere on the machine, so give its users strong passwords and treat them like root passwords. Turn on two-step sign-in (*Settings*).
+- If you open the page to the network, it requires HTTPS and two-step sign-in for every user. Keep the port closed in the firewall except while you use it, and open it only to your own IP address.
 - Settings, credentials and database passwords are stored in `/var/lib/storagebd` (root only, mode 0700). storagebd refuses to start if that folder is readable by others.
 - Data is encrypted on this machine before upload. storage.bd stores encrypted data only.
 - Database and storage.bd passwords never appear on command lines or in the environment of the programs storagebd runs.
@@ -376,6 +382,7 @@ Run `storagebd <command> --help` for every option. Commands act on the default b
 | `serve` | Run the web page and scheduler (the service does this) |
 | `ui-url` | Print the web page's address |
 | `user add\|list\|passwd\|signout\|remove` | Who can sign in to the web page |
+| `user 2fa enable\|disable` | Two-step sign-in for a web page user |
 | `upgrade` | Install the latest signed release (`--check` to only look) |
 | `version` | storagebd and restic versions |
 | `completion bash\|zsh\|fish` | Shell completion script |

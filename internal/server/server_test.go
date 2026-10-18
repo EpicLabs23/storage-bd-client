@@ -33,7 +33,7 @@ const (
 	testPass = "correct horse battery"
 )
 
-func start(t *testing.T) *harness {
+func start(t *testing.T, opts ...func(*Server)) *harness {
 	t.Helper()
 	bin := testutil.ResticOrSkip(t)
 	fake := testutil.NewFakeStorage(t)
@@ -60,7 +60,10 @@ func start(t *testing.T) *harness {
 	ctx, cancel := context.WithCancel(context.Background())
 	ready := make(chan string, 1)
 	done := make(chan error, 1)
-	go func() { done <- s.Run(ctx, "127.0.0.1:0", func(u string) { ready <- u }) }()
+	for _, o := range opts {
+		o(s)
+	}
+	go func() { done <- s.Run(ctx, "127.0.0.1:0", func(rd Ready) { ready <- rd.Also0() }) }()
 	var page string
 	select {
 	case page = <-ready:
@@ -72,14 +75,14 @@ func start(t *testing.T) *harness {
 		<-done
 	})
 	u, _ := url.Parse(page)
-	return &harness{base: "http://" + u.Host, fake: fake, srv: s}
+	return &harness{base: u.Scheme + "://" + u.Host, fake: fake, srv: s}
 }
 
 // client returns an HTTP client signed in as testUser.
 func (hs *harness) client(t *testing.T) *http.Client {
 	t.Helper()
 	jar, _ := cookiejar.New(nil)
-	c := &http.Client{Jar: jar, Timeout: 60 * time.Second}
+	c := &http.Client{Jar: jar, Timeout: 60 * time.Second, Transport: insecureTLS}
 	body := fmt.Sprintf(`{"username":%q,"password":%q}`, testUser, testPass)
 	if code, out := call(t, c, "POST", hs.base+"/api/ui/login", body, csrf); code != 200 {
 		t.Fatalf("ui login: %d %v", code, out)
@@ -247,14 +250,20 @@ func TestSetupRequiredWithoutUsers(t *testing.T) {
 	}
 }
 
-func TestListenAddrMustBeLoopback(t *testing.T) {
-	for _, a := range []string{"0.0.0.0:7878", "192.168.1.5:7878", "localhost:7878", ":7878"} {
-		if ValidateListenAddr(a) == nil {
-			t.Errorf("%s accepted", a)
+func TestListenAddr(t *testing.T) {
+	for _, a := range []string{"0.0.0.0:7878", "192.168.1.5:7878", ":7878"} {
+		if ValidateListenAddr(a, false) == nil {
+			t.Errorf("%s accepted without HTTPS", a)
+		}
+		if err := ValidateListenAddr(a, true); err != nil {
+			t.Errorf("%s with HTTPS: %v", a, err)
 		}
 	}
+	if ValidateListenAddr("localhost:7878", true) == nil {
+		t.Error("host name accepted")
+	}
 	for _, a := range []string{"127.0.0.1:7878", "[::1]:7878"} {
-		if err := ValidateListenAddr(a); err != nil {
+		if err := ValidateListenAddr(a, false); err != nil {
 			t.Errorf("%s: %v", a, err)
 		}
 	}

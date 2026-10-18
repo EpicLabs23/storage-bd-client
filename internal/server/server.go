@@ -8,15 +8,19 @@
 //     the page first can't claim it. Failed sign-ins are rate limited.
 //   - The session lives server-side; the browser holds an opaque,
 //     HttpOnly, SameSite=Strict cookie.
-//   - Listens on loopback only (remote use is via an SSH tunnel).
-//   - Host must be a loopback name (DNS-rebinding defense). Mutating
-//     requests need a custom header and a matching Origin (CSRF defense).
+//   - Listens on loopback by default (remote use via an SSH tunnel). It
+//     can be opened to the network (expose.go): that needs HTTPS, and
+//     every sign-in then needs two-step verification.
+//   - Host must be a loopback name, an IP, or a configured name (DNS-
+//     rebinding defense). Mutating requests need a custom header and a
+//     matching Origin (CSRF defense).
 //   - Strict CSP and frame-ancestors 'none' (no inline script, no
 //     clickjacking).
 package server
 
 import (
 	"context"
+	"crypto/tls"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -54,45 +58,62 @@ type Server struct {
 	DefaultAPIURL string
 	Version       string
 
-	hub   *hub
-	jobs  *jobManager
-	fails *failures
+	// From the ui-tls-cert / ui-tls-key / ui-hosts settings.
+	TLSCertFile string
+	TLSKeyFile  string
+	Hosts       []string
+
+	hub     *hub
+	jobs    *jobManager
+	fails   *failures
+	exposed bool
 }
 
 // ServeState is what `storagebd ui-url` reads.
 type ServeState struct {
-	URL string `json:"url"`
-	PID int    `json:"pid"`
+	URL     string   `json:"url"`
+	Also    []string `json:"also,omitempty"`
+	Exposed bool     `json:"exposed"`
+	PID     int      `json:"pid"`
 }
 
-// ValidateListenAddr accepts only loopback IP addresses.
-func ValidateListenAddr(addr string) error {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		return err
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("refusing to listen on %q: the UI is loopback-only (use an SSH tunnel for remote access: ssh -L 7878:127.0.0.1:7878 host)", addr)
-	}
-	return nil
+// Ready describes the running page, for `serve`'s startup message.
+type Ready struct {
+	ServeState
+	Port    int  // the port storagebd listens on
+	Proxied bool // loopback listener behind a reverse proxy (ui-hosts)
 }
 
-// Run serves until ctx is cancelled. onReady receives the page's URL.
-func (s *Server) Run(ctx context.Context, addr string, onReady func(pageURL string)) error {
-	if err := ValidateListenAddr(addr); err != nil {
+// Run serves until ctx is cancelled. onReady receives where the page is.
+func (s *Server) Run(ctx context.Context, addr string, onReady func(Ready)) error {
+	haveTLS := s.TLSCertFile != "" || s.TLSKeyFile != ""
+	if haveTLS && (s.TLSCertFile == "" || s.TLSKeyFile == "") {
+		return errors.New("HTTPS needs both ui-tls-cert and ui-tls-key")
+	}
+	if err := ValidateListenAddr(addr, haveTLS); err != nil {
 		return err
+	}
+	var certs *certReloader
+	if haveTLS {
+		var err error
+		if certs, err = newCertReloader(s.TLSCertFile, s.TLSKeyFile); err != nil {
+			return err
+		}
 	}
 	s.hub = newHub()
 	s.jobs = newJobManager(s)
 	s.fails = newFailures()
+	s.exposed = !isLoopbackListen(addr) || len(s.Hosts) > 0
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	pageURL := fmt.Sprintf("http://%s/", ln.Addr().String())
-	if err := s.writeState(ServeState{URL: pageURL, PID: os.Getpid()}); err != nil {
+	if certs != nil {
+		ln = tls.NewListener(ln, certs.config())
+	}
+	st := s.pageURLs(ln.Addr().(*net.TCPAddr), certs != nil)
+	if err := s.writeState(st); err != nil {
 		ln.Close()
 		return err
 	}
@@ -114,7 +135,8 @@ func (s *Server) Run(ctx context.Context, addr string, onReady func(pageURL stri
 	go s.sweepSessions(ctx)
 
 	if onReady != nil {
-		onReady(pageURL)
+		a := ln.Addr().(*net.TCPAddr)
+		onReady(Ready{ServeState: st, Port: a.Port, Proxied: a.IP.IsLoopback() && len(s.Hosts) > 0})
 	}
 	err = srv.Serve(ln)
 	if errors.Is(err, http.ErrServerClosed) {
@@ -122,6 +144,33 @@ func (s *Server) Run(ctx context.Context, addr string, onReady func(pageURL stri
 		return nil
 	}
 	return err
+}
+
+// pageURLs works out the address(es) to tell the admin.
+func (s *Server) pageURLs(a *net.TCPAddr, https bool) ServeState {
+	st := ServeState{Exposed: s.exposed, PID: os.Getpid()}
+	scheme := "http"
+	if https {
+		scheme = "https"
+	}
+	port := fmt.Sprint(a.Port)
+	switch {
+	case a.IP.IsLoopback() && len(s.Hosts) > 0:
+		// Behind a reverse proxy: its address first, then the direct one.
+		st.URL = "https://" + s.Hosts[0] + "/"
+		st.Also = []string{scheme + "://" + net.JoinHostPort(a.IP.String(), port) + "/"}
+	case a.IP.IsLoopback():
+		st.URL = scheme + "://" + net.JoinHostPort(a.IP.String(), port) + "/"
+	default:
+		host := a.IP.String()
+		if len(s.Hosts) > 0 {
+			host = s.Hosts[0]
+		} else if a.IP.IsUnspecified() {
+			host = "<this-server's-address>"
+		}
+		st.URL = scheme + "://" + net.JoinHostPort(host, port) + "/"
+	}
+	return st
 }
 
 func (s *Server) writeState(st ServeState) error {
@@ -182,7 +231,7 @@ func (s *Server) routes() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		securityHeaders(w)
-		if !isLoopbackHost(r.Host) {
+		if !s.allowedHost(r.Host) {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
@@ -199,7 +248,7 @@ func (s *Server) routes() http.Handler {
 				writeErr(w, http.StatusForbidden, "missing request header")
 				return
 			}
-			if o := r.Header.Get("Origin"); o != "" && o != pageOrigin(r) {
+			if o := r.Header.Get("Origin"); o != "" && !sameOrigin(o, r.Host) {
 				writeErr(w, http.StatusForbidden, "cross-origin request refused")
 				return
 			}
@@ -215,13 +264,6 @@ func (s *Server) routes() http.Handler {
 		}
 		api.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
 	})
-}
-
-func pageOrigin(r *http.Request) string {
-	if r.TLS != nil {
-		return "https://" + r.Host
-	}
-	return "http://" + r.Host
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

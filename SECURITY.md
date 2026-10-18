@@ -18,7 +18,7 @@ In scope: the `storagebd` program, its web page, the installer scripts (`get.sh`
 
 ## How storagebd protects you
 
-- The backup web page listens on loopback only. Sign-in uses users created on the server only (argon2id password hashes, rate-limited attempts, server-side sessions in HttpOnly SameSite=Strict cookies). It rejects foreign `Host`/`Origin` headers (DNS rebinding and CSRF) and sends a strict Content-Security-Policy.
+- The backup web page listens on loopback by default. Sign-in uses users created on the server only (argon2id password hashes, optional TOTP two-step sign-in with single-use backup codes, rate-limited attempts, server-side sessions in HttpOnly SameSite=Strict cookies). Opening it to the network requires HTTPS and two-step sign-in for every user, and only the terminal can turn that on. It rejects foreign `Host`/`Origin` headers (DNS rebinding and CSRF) and sends a strict Content-Security-Policy.
 - Secrets are never passed on command lines or in environment variables: restic gets its password through a 0600 file, database tools through option or pass files.
 - Local state lives in a 0700 directory, and storagebd refuses to start if that's not the case.
 - storagebd refuses to run a restic or database tool that other users could have replaced.

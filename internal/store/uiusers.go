@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -30,6 +32,7 @@ type UISession struct {
 	ExpiresAt  time.Time
 	RemoteAddr string
 	UserAgent  string
+	MFA        bool // signed in (or later confirmed) with a second factor
 }
 
 var usernamePattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
@@ -157,18 +160,19 @@ func (s *Store) DeleteUISessionsForUser(ctx context.Context, id int64) (int64, e
 func (s *Store) CreateUISession(ctx context.Context, sess *UISession) error {
 	ts := now()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO ui_sessions
-		(token_hash, user_id, created_at, last_seen_at, expires_at, remote_addr, user_agent)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		sess.TokenHash, sess.UserID, ts, ts, sess.ExpiresAt.UTC().Format(time.RFC3339), sess.RemoteAddr, sess.UserAgent)
+		(token_hash, user_id, created_at, last_seen_at, expires_at, remote_addr, user_agent, mfa)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		sess.TokenHash, sess.UserID, ts, ts, sess.ExpiresAt.UTC().Format(time.RFC3339), sess.RemoteAddr, sess.UserAgent, boolInt(sess.MFA))
 	return err
 }
 
 func (s *Store) GetUISession(ctx context.Context, tokenHash string) (*UISession, error) {
 	var sess UISession
 	var created, seen, exp string
-	err := s.db.QueryRowContext(ctx, `SELECT token_hash, user_id, created_at, last_seen_at, expires_at, remote_addr, user_agent
+	var mfa int
+	err := s.db.QueryRowContext(ctx, `SELECT token_hash, user_id, created_at, last_seen_at, expires_at, remote_addr, user_agent, mfa
 		FROM ui_sessions WHERE token_hash = ?`, tokenHash).
-		Scan(&sess.TokenHash, &sess.UserID, &created, &seen, &exp, &sess.RemoteAddr, &sess.UserAgent)
+		Scan(&sess.TokenHash, &sess.UserID, &created, &seen, &exp, &sess.RemoteAddr, &sess.UserAgent, &mfa)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -178,6 +182,7 @@ func (s *Store) GetUISession(ctx context.Context, tokenHash string) (*UISession,
 	sess.CreatedAt, _ = time.Parse(time.RFC3339, created)
 	sess.LastSeenAt, _ = time.Parse(time.RFC3339, seen)
 	sess.ExpiresAt, _ = time.Parse(time.RFC3339, exp)
+	sess.MFA = mfa == 1
 	return &sess, nil
 }
 
@@ -198,4 +203,128 @@ func (s *Store) DeleteStaleUISessions(ctx context.Context, idle time.Duration) e
 	_, err := s.db.ExecContext(ctx, `DELETE FROM ui_sessions WHERE expires_at < ? OR last_seen_at < ?`,
 		t.Format(time.RFC3339), t.Add(-idle).Format(time.RFC3339))
 	return err
+}
+
+// UITOTP is a user's 2FA state. Secret may be set while Enabled is false:
+// that's an enrollment waiting for its first code.
+type UITOTP struct {
+	Secret      string
+	Enabled     bool
+	BackupCodes []string // SHA-256 hashes, see uiauth.NewBackupCodes
+	LastStep    int64
+}
+
+func (s *Store) GetUITOTP(ctx context.Context, userID int64) (*UITOTP, error) {
+	var t UITOTP
+	var enabled int
+	var codes string
+	err := s.db.QueryRowContext(ctx, `SELECT totp_secret, totp_enabled, totp_backup_codes, totp_last_step FROM ui_users WHERE id = ?`, userID).
+		Scan(&t.Secret, &enabled, &codes, &t.LastStep)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	t.Enabled = enabled == 1
+	if err := json.Unmarshal([]byte(codes), &t.BackupCodes); err != nil {
+		return nil, fmt.Errorf("user %d: bad backup codes: %w", userID, err)
+	}
+	return &t, nil
+}
+
+// StartUITOTP stores a new, not yet confirmed secret. Refused while 2FA
+// is on: replacing a working secret needs `disable` first.
+func (s *Store) StartUITOTP(ctx context.Context, userID int64, secret string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE ui_users SET totp_secret = ?, updated_at = ? WHERE id = ? AND totp_enabled = 0`,
+		secret, now(), userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrTOTPAlreadyOn
+	}
+	return nil
+}
+
+var ErrTOTPAlreadyOn = errors.New("two-step sign-in is already on for this user; turn it off first to set it up again")
+
+// EnableUITOTP turns 2FA on for the pending secret (confirmed with the
+// code at step) and signs the user out everywhere except keepSession.
+func (s *Store) EnableUITOTP(ctx context.Context, userID int64, secret string, step int64, backupHashes []string, keepSession string) error {
+	codes, _ := json.Marshal(backupHashes)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE ui_users SET totp_enabled = 1, totp_backup_codes = ?, totp_last_step = ?, updated_at = ?
+		WHERE id = ? AND totp_enabled = 0 AND totp_secret = ?`, string(codes), step, now(), userID, secret)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return errors.New("two-step sign-in setup changed meanwhile; start again")
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM ui_sessions WHERE user_id = ? AND token_hash != ?`, userID, keepSession); err != nil {
+		return err
+	}
+	// The browser that just proved the code counts as 2FA-verified.
+	if _, err := tx.ExecContext(ctx, `UPDATE ui_sessions SET mfa = 1 WHERE token_hash = ?`, keepSession); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DisableUITOTP turns 2FA off and drops the user's 2FA-verified sessions
+// claim (they become plain password sessions).
+func (s *Store) DisableUITOTP(ctx context.Context, userID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE ui_users SET totp_enabled = 0, totp_secret = '', totp_backup_codes = '[]', totp_last_step = 0, updated_at = ?
+		WHERE id = ?`, now(), userID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE ui_sessions SET mfa = 0 WHERE user_id = ?`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// UseUITOTPStep records a sign-in at step. It fails if that step (or a
+// later one) was already used, so two requests racing with the same code
+// can't both win.
+func (s *Store) UseUITOTPStep(ctx context.Context, userID, step int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE ui_users SET totp_last_step = ? WHERE id = ? AND totp_enabled = 1 AND totp_last_step < ?`,
+		step, userID, step)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
+}
+
+// UseUIBackupCode removes the hash at index i, only if the list is still
+// the one the caller read (two racing uses of one code: one wins).
+func (s *Store) UseUIBackupCode(ctx context.Context, userID int64, read []string, i int) (bool, error) {
+	if i < 0 || i >= len(read) {
+		return false, nil
+	}
+	old, _ := json.Marshal(read)
+	rest := append(append([]string{}, read[:i]...), read[i+1:]...)
+	next, _ := json.Marshal(rest)
+	res, err := s.db.ExecContext(ctx, `UPDATE ui_users SET totp_backup_codes = ? WHERE id = ? AND totp_enabled = 1 AND totp_backup_codes = ?`,
+		string(next), userID, string(old))
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }

@@ -193,6 +193,13 @@ var migrations = []string{
 		user_agent   TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX ui_sessions_by_user ON ui_sessions(user_id);`,
+
+	// 8: two-step sign-in. totp_last_step is the last TOTP time step a
+	// user signed in with, so a code can't be used twice inside its 30 s
+	// window. ui_sessions.mfa marks sessions that passed 2FA: when the
+	// page is open to the network, only those are accepted.
+	`ALTER TABLE ui_users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE ui_sessions ADD COLUMN mfa INTEGER NOT NULL DEFAULT 0;`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {

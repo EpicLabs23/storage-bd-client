@@ -100,7 +100,7 @@ For just the `storagebd` binary: `make build` gives `bin/storagebd`. You then ne
 
 ## Open the backup page
 
-The backup page runs on the server and listens only on `127.0.0.1:7878`, so nothing on the network can reach it. To use it from your own computer, you forward that port over SSH. This keeps the page private: only someone who can already log in to the server over SSH can reach it.
+The backup page runs on the server. By default it listens only on `127.0.0.1:7878`, so nothing on the network can reach it, and you reach it from your own computer through an SSH tunnel (below). You can also [open it on a network port](#open-the-page-on-a-network-port) with HTTPS and two-step sign-in.
 
 You sign in to the page with a username and password. The installer asks you for the `admin` user's password. Users are managed only on the server, never from the page:
 
@@ -113,6 +113,15 @@ sudo storagebd user remove <name>
 ```
 
 Drop the `sudo` for a `--user` install. Signing in stays valid for 12 hours of inactivity (at most 7 days). Five wrong passwords in a row lock that username out for 15 minutes from that address.
+
+**Two-step sign-in** adds a 6-digit code from an authenticator app (Google or Microsoft Authenticator, 1Password, Bitwarden, Aegis…) after the password. Turn it on in the page (*Settings → Two-step sign-in*), or on the server:
+
+```sh
+sudo storagebd user 2fa enable <name>    # shows a QR code to scan, then asks for a code
+sudo storagebd user 2fa disable <name>   # e.g. a lost phone and no backup codes left
+```
+
+Turning it on gives you 8 backup codes. Each one works once instead of an app code. It's optional while the page is on `127.0.0.1`, and required while it's open to the network.
 
 ### At the server itself
 
@@ -165,10 +174,88 @@ The command prints nothing and doesn't return. That means the tunnel is open. Le
 - **The page says "Create a user to sign in"**: no user exists yet (for example after `storagebd upgrade` from v0.1.3 or older). Run `sudo storagebd user add admin` on the server, then reload.
 - **Forgot the password**: `sudo storagebd user passwd <name>` on the server.
 - **"too many failed sign-ins"**: wait 15 minutes, or reset the password on the server.
+- **"two-step sign-in is required"**: the page is open to the network. Run `sudo storagebd user 2fa enable <name>` on the server.
+- **Lost the phone**: sign in with a backup code, or turn 2FA off on the server with `sudo storagebd user 2fa disable <name>` and set it up again.
+- **"refusing to open the page to the network … without HTTPS"**: set `ui-tls-cert` and `ui-tls-key` first (see [Open the page on a network port](#open-the-page-on-a-network-port)).
 
 ### Without systemd
 
 For example in a container: start it yourself on the server with `sudo storagebd serve`. It prints the page's address when it starts, and stays in the foreground.
+
+## Open the page on a network port
+
+Instead of an SSH tunnel, you can make the page reachable at an address like `https://backup.example.com:7878`. The page can restore files anywhere on the server, so storagebd then insists on:
+
+- **HTTPS.** Your certificate and key files, as for any website (for example from Let's Encrypt). A renewed certificate is picked up without a restart.
+- **Two-step sign-in for every user.** Users who haven't turned it on can't sign in until they do (`sudo storagebd user 2fa enable <name>`). Browsers that signed in with just a password are signed out.
+- **Server-only settings.** These settings can only be changed in the terminal, never from the page.
+
+**Keep the port closed when you're not using it.** Open it in the firewall only while you use the page, and only to your own IP address. See [Firewall](#firewall) below.
+
+### With storagebd's own HTTPS
+
+```sh
+sudo storagebd user 2fa enable admin
+sudo storagebd settings set ui-tls-cert /etc/letsencrypt/live/backup.example.com/fullchain.pem
+sudo storagebd settings set ui-tls-key  /etc/letsencrypt/live/backup.example.com/privkey.pem
+sudo storagebd settings set ui-hosts backup.example.com
+sudo storagebd settings set ui-listen 0.0.0.0:7878
+sudo systemctl restart storagebd
+```
+
+Then open `https://backup.example.com:7878`. `ui-hosts` lists the names the page answers to (comma-separated). Addresses like `https://203.0.113.10:7878` always work, but the browser warns if the certificate doesn't cover them. The key file must not be readable by other users.
+
+To get a certificate with certbot when nothing else serves port 80: `sudo certbot certonly --standalone -d backup.example.com` (port 80 must be open while it runs).
+
+### Behind nginx (or another reverse proxy)
+
+Leave storagebd on `127.0.0.1:7878` and set `ui-hosts` to the proxy's name, so storagebd knows it's behind a proxy:
+
+```sh
+sudo storagebd user 2fa enable admin
+sudo storagebd settings set ui-hosts backup.example.com
+sudo systemctl restart storagebd
+```
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name backup.example.com;
+    ssl_certificate     /etc/letsencrypt/live/backup.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/backup.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:7878;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;   # for the sign-in rate limit and log
+        proxy_set_header X-Forwarded-Proto https;  # marks the session cookie Secure
+        proxy_buffering off;                       # live backup progress
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+storagebd believes `X-Real-IP` and `X-Forwarded-Proto` only from loopback, and only when `ui-hosts` is set.
+
+### Firewall
+
+Open the port only while you use the page, and only to your own IP address. Then close it again.
+
+| Firewall | Open | Close |
+|---|---|---|
+| ufw | `sudo ufw allow from YOUR.IP to any port 7878 proto tcp` | `sudo ufw delete allow from YOUR.IP to any port 7878 proto tcp` |
+| firewalld | `sudo firewall-cmd --add-rich-rule='rule family="ipv4" source address="YOUR.IP" port port="7878" protocol="tcp" accept'` | `sudo firewall-cmd --remove-rich-rule='…same rule…'`, or reload/reboot (without `--permanent` it isn't saved) |
+| Cloud provider | Add an inbound rule: TCP 7878 from `YOUR.IP/32` | Remove the rule |
+
+Use 443 instead of 7878 behind a reverse proxy. Find your IP address by searching "what is my IP" in your browser. The page shows the same reminder while it's open to the network, and `storagebd serve` prints it at startup.
+
+### Back to the SSH tunnel only
+
+```sh
+sudo storagebd settings unset ui-listen
+sudo storagebd settings unset ui-hosts
+sudo systemctl restart storagebd
+```
 
 ## Upgrade
 

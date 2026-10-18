@@ -37,8 +37,8 @@ make build API_URL=<that URL> && ./bin/storagebd --home /tmp/sbui user add admin
 - `internal/jobs` — backup/restore runs under the per-credential job lock, job history, progress events
 - `internal/execsafe` — binary ownership/permission checks shared by restic and DB tools
 - `internal/update` — `storagebd upgrade`: minisign verification against the embedded `keys/*.pub`, release download + safe unpack
-- `internal/uiauth` — web UI password hashing (argon2id) and checks
-- `internal/server` — `serve`: loopback web UI (username/password sign-in, `auth.go`) (embedded `web/`), JSON API, SSE events, background jobs, scheduler
+- `internal/uiauth` — web UI credentials: argon2id passwords, TOTP + backup codes, QR rendering
+- `internal/server` — `serve`: web UI (sign-in + 2FA in `auth.go`; HTTPS/exposure in `expose.go`) (embedded `web/`), JSON API, SSE events, background jobs, scheduler
 - `internal/testutil` — fake storage.bd (account endpoints, tokens, escrow, restic REST repo with S3-style redirects) for tests; `cmd/fakestorage` runs it standalone
 
 ## Rules

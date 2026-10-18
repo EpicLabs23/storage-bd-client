@@ -261,7 +261,10 @@ function go(view) {
 function render() {
   const el = clear(root());
   if (!app.state.credentials.length) {
-    el.append(onboarding());
+    const ob = onboarding();
+    const banner = exposedBanner();
+    if (banner) ob.prepend(banner);
+    el.append(ob);
     return;
   }
   const nav = h("nav", { class: "nav", "aria-label": "Sections" },
@@ -275,7 +278,7 @@ function render() {
     side.append(h("div", { class: "repo-switch" }, h("label", {}, "Backup space"), sel));
   }
   side.append(nav);
-  const main = h("main", { class: "main", id: "main" });
+  const main = h("main", { class: "main", id: "main" }, exposedBanner());
   el.append(h("div", { class: "shell" }, side, main));
   const views = { overview, sources, restore: restoreView, schedule, activity, settings };
   (views[app.view] || overview)(main);
@@ -300,6 +303,10 @@ function onboarding() {
   else wrap.append(connectCard(sess, 2));
   wrap.append(h("p", { class: "small soft mt-14" }, "Already added storage in your storage.bd dashboard? ",
     h("button", { class: "linkish", type: "button", onclick: () => { app.onboardExisting = true; render(); } }, "Use it on this machine")));
+  if (!app.state.ui_user_2fa) {
+    wrap.append(h("p", { class: "small soft mt-8" }, "Protect this page: ",
+      h("button", { class: "linkish", type: "button", onclick: enable2FADialog }, "turn on two-step sign-in")));
+  }
   return wrap;
 }
 
@@ -1018,7 +1025,8 @@ async function settings(main) {
     h("div", { class: "btn-row" }, h("span", {}, "Signed in as ", h("strong", {}, app.state.ui_user)),
       h("button", { class: "btn sm ml-auto", type: "button", onclick: changePasswordDialog }, "Change password"),
       h("button", { class: "btn sm", type: "button", onclick: signOut }, "Sign out")),
-    h("p", { class: "small soft mt-8" }, "Add or remove users on the server: ", h("code", {}, "storagebd user --help"))));
+    h("p", { class: "small soft mt-8" }, "Add or remove users on the server: ", h("code", {}, "storagebd user --help"))),
+    twoStepCard());
 
   // account
   const sess = sessionFor(c.api_url);
@@ -1145,21 +1153,36 @@ function setupCard() {
 function signinCard() {
   const user = input({ autocomplete: "username", required: true, autocapitalize: "none" });
   const pass = input({ type: "password", autocomplete: "current-password", required: true });
+  const code = input({ autocomplete: "one-time-code", inputmode: "numeric", spellcheck: "false" });
+  const codeField = field("Code from your authenticator app", code, "Or one of your backup codes.");
+  codeField.hidden = true;
   const btn = h("button", { class: "btn primary lg", type: "submit" }, "Sign in");
   const err = h("div", { class: "banner bad mt-14", role: "alert", hidden: true });
-  const form = h("form", {}, field("Username", user), field("Password", pass), err, h("div", { class: "btn-row mt-20" }, btn));
+  const form = h("form", {}, field("Username", user), field("Password", pass), codeField, err, h("div", { class: "btn-row mt-20" }, btn));
+  const showErr = (msg) => { clear(err).append(icon("alert"), msg); err.hidden = false; };
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     btn.disabled = true;
     err.hidden = true;
     try {
-      await api("POST", "/api/ui/login", { username: user.value, password: pass.value });
-      pass.value = "";
+      const body = { username: user.value, password: pass.value };
+      if (!codeField.hidden) body.code = code.value.trim();
+      await api("POST", "/api/ui/login", body);
+      pass.value = ""; code.value = "";
       startApp();
     } catch (e2) {
-      clear(err).append(icon("alert"), e2.message);
-      err.hidden = false;
-      pass.select();
+      if (e2.body && e2.body.code === "totp_required") {
+        // Password was right: ask for the second step, keep what was typed.
+        const first = codeField.hidden;
+        codeField.hidden = false;
+        user.readOnly = true; pass.readOnly = true;
+        if (!first) showErr(e2.message);
+        code.value = "";
+        code.focus();
+      } else {
+        showErr(e2.message);
+        if (codeField.hidden) pass.select(); else code.select();
+      }
     } finally { btn.disabled = false; }
   });
   setTimeout(() => user.focus(), 0);
@@ -1205,6 +1228,111 @@ function changePasswordDialog() {
       toast("Password changed.", "ok");
     } }],
   });
+}
+
+function twoStepCard() {
+  const on = app.state.ui_user_2fa;
+  return h("div", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", {}, "Two-step sign-in"),
+      h("span", { class: "badge ml-auto " + (on ? "ok" : "warn") }, on ? "On" : "Off")),
+    h("p", { class: "soft" }, on
+      ? "Signing in needs a code from your authenticator app after the password."
+      : "After the password, ask for a 6-digit code from an authenticator app on your phone. Required while this page is open to the network."),
+    h("div", { class: "btn-row mt-14" },
+      on
+        ? (app.state.exposed
+          ? h("p", { class: "small soft" }, "Can't be turned off here while the page is open to the network. On the server: ", h("code", {}, "sudo storagebd user 2fa disable " + app.state.ui_user))
+          : h("button", { class: "btn sm", type: "button", onclick: disable2FADialog }, "Turn off"))
+        : h("button", { class: "btn primary sm", type: "button", onclick: enable2FADialog }, icon("shield"), "Turn on")));
+}
+
+function enable2FADialog() {
+  const pass = input({ type: "password", autocomplete: "current-password" });
+  dialog({
+    title: "Turn on two-step sign-in",
+    intro: "Enter your password to start. You'll need an authenticator app (Google or Microsoft Authenticator, 1Password, Bitwarden, Aegis…).",
+    body: field("Password", pass),
+    actions: [{ label: "Continue", onClick: async () => {
+      const r = await api("POST", "/api/ui/2fa/setup", { password: pass.value });
+      pass.value = "";
+      scan2FADialog(r);
+    } }],
+  });
+}
+
+function scan2FADialog(r) {
+  const code = input({ autocomplete: "one-time-code", inputmode: "numeric", maxlength: "6" });
+  const key = r.secret.replace(/(.{4})/g, "$1 ").trim();
+  dialog({
+    title: "Scan with your authenticator app",
+    body: h("div", {},
+      h("div", { class: "qr-wrap" }, h("img", { class: "qr", src: r.qr, alt: "QR code for your authenticator app", width: "220", height: "220" })),
+      h("p", { class: "small soft mt-8" }, "Can't scan? Add this key by hand (time-based, 6 digits):"),
+      h("p", { class: "muted-box mono small mt-4" }, key),
+      h("div", { class: "mt-14" }, field("Code shown in the app", code))),
+    actions: [{ label: "Turn on", onClick: async () => {
+      const res = await api("POST", "/api/ui/2fa/confirm", { code: code.value.trim() });
+      await refresh();
+      render();
+      backupCodesDialog(res.backup_codes);
+    } }],
+  });
+}
+
+function backupCodesDialog(codes) {
+  const text = codes.join("\n");
+  dialog({
+    title: "Two-step sign-in is on",
+    intro: "Save these backup codes somewhere safe. Each one works once instead of an app code, if you lose your phone. They won't be shown again. Other browsers were signed out.",
+    body: h("div", {},
+      h("div", { class: "codes mono" }, codes.map((c) => h("span", {}, c))),
+      h("div", { class: "btn-row mt-14" }, h("button", { class: "btn sm", type: "button", onclick: async () => {
+        try { await navigator.clipboard.writeText(text); toast("Copied.", "ok"); } catch { toast("Couldn't copy; select the codes instead.", "bad"); }
+      } }, "Copy"))),
+    actions: [{ label: "I've saved them", onClick: () => true }],
+  });
+}
+
+function disable2FADialog() {
+  const pass = input({ type: "password", autocomplete: "current-password" });
+  const code = input({ autocomplete: "one-time-code" });
+  dialog({
+    title: "Turn off two-step sign-in?",
+    intro: "Signing in will need only your password.",
+    body: h("div", {}, field("Password", pass), field("Code from your app (or a backup code)", code)),
+    actions: [{ label: "Turn off", kind: "danger solid", onClick: async () => {
+      await api("POST", "/api/ui/2fa/disable", { password: pass.value, code: code.value.trim() });
+      toast("Two-step sign-in is off.");
+      await refresh();
+      go("settings");
+    } }],
+  });
+}
+
+// exposedBanner reminds the admin to close the port when done. Dismissed
+// per browser tab session.
+function exposedBanner() {
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem("exposed-ok") === "1"; } catch {}
+  if (!app.state.exposed || dismissed) return null;
+  const port = location.port || (location.protocol === "https:" ? "443" : "80");
+  const b = h("div", { class: "banner warn exposed" }, icon("alert"),
+    h("div", { class: "grow" },
+      h("strong", {}, "This page is open to the network. "),
+      "It can restore files anywhere on this server, so close port " + port + " in the firewall when you're done, and open it only to your own IP address. ",
+      h("details", { class: "mt-4" }, h("summary", { class: "small" }, "Firewall commands"),
+        h("pre", { class: "mono small mt-4" },
+          "# ufw: open for your IP only, then close\n" +
+          "sudo ufw allow from YOUR.IP to any port " + port + " proto tcp\n" +
+          "sudo ufw delete allow from YOUR.IP to any port " + port + " proto tcp\n\n" +
+          "# firewalld (temporary: gone on reload/reboot)\n" +
+          "sudo firewall-cmd --add-rich-rule='rule family=\"ipv4\" source address=\"YOUR.IP\" port port=\"" + port + "\" protocol=\"tcp\" accept'\n\n" +
+          "# cloud servers: add, then remove, an inbound TCP " + port + " rule for YOUR.IP/32"))),
+    h("button", { class: "btn sm ghost", type: "button", "aria-label": "Dismiss", onclick: () => {
+      try { sessionStorage.setItem("exposed-ok", "1"); } catch {}
+      b.remove();
+    } }, "Got it"));
+  return b;
 }
 
 async function startApp() {
